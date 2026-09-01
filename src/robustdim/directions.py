@@ -47,25 +47,22 @@ def _project(basis: Tensor, delta: Tensor, dtype: torch.dtype) -> Tensor:
     return (basis @ (basis.T @ delta)).to(dtype=dtype)
 
 
-def lowvar(pos: Tensor, neg: Tensor, frac: float = 0.01) -> Tensor:
-    pos64, neg64 = pos.double(), neg.double()
-    _, evecs = torch.linalg.eigh(centered_cov(pos64))
+def lowvar(pos: Tensor, d: Tensor, frac: float = 0.01) -> Tensor:
+    _, evecs = torch.linalg.eigh(centered_cov(pos.double()))
     k = spectrum_k(pos.shape[1], frac)
-    return _project(evecs[:, :k], dim(pos64, neg64), pos.dtype)
+    return _project(evecs[:, :k], d.double(), pos.dtype)
 
 
-def moment_proj(pos: Tensor, neg: Tensor, frac: float = 0.01) -> Tensor:
-    pos64, neg64 = pos.double(), neg.double()
-    _, evecs = torch.linalg.eigh(second_moment(pos64))
+def moment_proj(pos: Tensor, d: Tensor, frac: float = 0.01) -> Tensor:
+    _, evecs = torch.linalg.eigh(second_moment(pos.double()))
     k = spectrum_k(pos.shape[1], frac)
-    return _project(evecs[:, -k:], dim(pos64, neg64), pos.dtype)
+    return _project(evecs[:, -k:], d.double(), pos.dtype)
 
 
-def moment(pos: Tensor, neg: Tensor) -> Tensor:
-    pos64, neg64 = pos.double(), neg.double()
-    _, evecs = torch.linalg.eigh(second_moment(pos64))
+def moment(pos: Tensor, d: Tensor) -> Tensor:
+    _, evecs = torch.linalg.eigh(second_moment(pos.double()))
     v = evecs[:, -1]
-    if torch.dot(v, dim(pos64, neg64)) < 0:
+    if torch.dot(v, d.double()) < 0:
         v = -v
     return v.to(dtype=pos.dtype)
 
@@ -73,22 +70,24 @@ def moment(pos: Tensor, neg: Tensor) -> Tensor:
 def construct(
     name: str,
     pos: Tensor,
-    neg: Tensor,
+    neg: Tensor | None,
+    d: Tensor,
     *,
     ridge_gamma: float = 1.0,
     lowvar_frac: float = 0.01,
     moment_k_frac: float = 0.01,
 ) -> Tensor:
     if name == "dim":
-        return dim(pos, neg)
-    if name == "lda":
-        return lda(pos, neg)
-    if name == "ridge":
-        return ridge_lda(pos, neg, gamma=ridge_gamma)
+        return d
+    if name in ("lda", "ridge"):
+        if neg is None:
+            raise ValueError(f"{name} needs the negative class")
+        gamma = 0.0 if name == "lda" else ridge_gamma
+        return lda(pos, neg, gamma=gamma)
     if name == "lowvar":
-        return lowvar(pos, neg, frac=lowvar_frac)
+        return lowvar(pos, d, frac=lowvar_frac)
     if name == "moment_proj":
-        return moment_proj(pos, neg, frac=moment_k_frac)
+        return moment_proj(pos, d, frac=moment_k_frac)
     if name == "moment":
-        return moment(pos, neg)
+        return moment(pos, d)
     raise ValueError(f"unknown method: {name}")
