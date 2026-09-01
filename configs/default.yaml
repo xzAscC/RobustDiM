@@ -24,7 +24,7 @@ stability:
   pool_n: 4000
 
 steering:
-  alpha: 1.0
+  alpha: 10.0
   greedy: true
   max_new_tokens_harmbench: 256
   max_new_tokens_mmlu: 512
@@ -37,7 +37,8 @@ eval:
   # gemini-3.x only serves from the multi-region endpoint
   judge_location: global
   mmlu_split: test
-  mmlu_n: null
+  # rows are category-grouped; a seeded random subset is used
+  mmlu_n: 50
 
 io:
   logs: logs

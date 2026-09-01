@@ -60,7 +60,9 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
         torch.save(v, ckpt / f"{name}.pt")
 
     hb = load_harmbench_contextual(cfg["eval"]["harmbench_n"])
-    mmlu = load_mmlu_pro(cfg["eval"]["mmlu_split"], cfg["eval"].get("mmlu_n"))
+    mmlu = load_mmlu_pro(
+        cfg["eval"]["mmlu_split"], cfg["eval"].get("mmlu_n"), cfg["stability"]["seed"]
+    )
     layer = cfg["model"]["layer"]
     alpha = cfg["steering"]["alpha"]
     hb_tokens = cfg["steering"]["max_new_tokens_harmbench"]

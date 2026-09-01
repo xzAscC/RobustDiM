@@ -49,13 +49,13 @@ def load_harmbench_contextual(n: int = 100) -> list[dict[str, str]]:
     return rows
 
 
-def load_mmlu_pro(split: str = "test", n: int | None = None) -> list[dict[str, Any]]:
+def load_mmlu_pro(
+    split: str = "test", n: int | None = None, seed: int = 0
+) -> list[dict[str, Any]]:
     from datasets import load_dataset
 
     ds = load_dataset("TIGER-Lab/MMLU-Pro", split=split)
-    rows: list[dict[str, Any]] = []
-    for row in ds:
-        rows.append({str(k): v for k, v in dict(row).items()})
-        if n is not None and len(rows) == n:
-            break
-    return rows
+    total = len(ds)
+    # rows are grouped by category, so subsample instead of slicing
+    idx = sample_indices(total, n, seed) if n is not None else range(total)
+    return [dict(ds[i]) for i in idx]
