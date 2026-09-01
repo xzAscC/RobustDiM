@@ -8,6 +8,15 @@ def sample_indices(n_total: int, n: int, seed: int) -> list[int]:
     return random.Random(seed).sample(range(n_total), n)
 
 
+def disjoint_subsets(pool: int, size: int, count: int, seed: int) -> list[list[int]]:
+    if size * count > pool:
+        raise ValueError(
+            f"need {size}x{count}={size * count} disjoint rows, pool is {pool}"
+        )
+    perm = random.Random(seed).sample(range(pool), pool)
+    return [perm[i * size : (i + 1) * size] for i in range(count)]
+
+
 def _prompts(rows: Any, field: str = "prompt") -> list[str]:
     texts: list[str] = []
     for row in rows:
