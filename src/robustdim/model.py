@@ -7,9 +7,19 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from robustdim.hidden import chat_text, last_token
 
 
-def apply_steer(hidden: Tensor, direction: Tensor, alpha: float) -> Tensor:
-    d = direction.to(device=hidden.device, dtype=hidden.dtype).view(1, 1, -1)
-    return hidden + alpha * d
+def last_prompt_hook(direction: Tensor, alpha: float, pos: int) -> Any:
+    def hook(_module: Any, _inp: Any, output: Any) -> Any:
+        tensor = output[0] if isinstance(output, tuple) else output
+        if tensor.shape[1] <= pos:
+            return output
+        steered = tensor.clone()
+        d = direction.to(device=tensor.device, dtype=tensor.dtype)
+        steered[:, pos, :] = steered[:, pos, :] + alpha * d
+        if isinstance(output, tuple):
+            return (steered, *output[1:])
+        return steered
+
+    return hook
 
 
 class HookedLM:
@@ -67,15 +77,10 @@ class HookedLM:
         tok = self._encode([chat_text(self.tokenizer, user)])
         handle = None
         if direction is not None and alpha != 0.0:
-
-            def hook(_module: Any, _inp: Any, output: Any) -> Any:
-                tensor = output[0] if isinstance(output, tuple) else output
-                steered = apply_steer(tensor, direction, alpha)
-                if isinstance(output, tuple):
-                    return (steered, *output[1:])
-                return steered
-
-            handle = self.layers[layer].register_forward_hook(hook)
+            pos = tok["input_ids"].shape[1] - 1
+            handle = self.layers[layer].register_forward_hook(
+                last_prompt_hook(direction, alpha, pos)
+            )
         try:
             generate = getattr(self.model, "generate")
             out = generate(
