@@ -21,7 +21,7 @@ methods:
 stability:
   replicates: 5
   seed: 0
-  pool_n: 4000
+  pool_n: 16000
 
 steering:
   alpha: 10.0
