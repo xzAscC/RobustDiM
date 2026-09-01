@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from robustdim!")
+"""Robust concept steering for Difference-in-Means (DiM)."""
