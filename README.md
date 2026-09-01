@@ -13,6 +13,7 @@ uv sync
 ```text
 src/: source code
 tests/: test code
+notebooks/: jupyter notebooks
 scripts/: sh files to run the code
 logs/: log for different results
 figs/: figs for experiments
