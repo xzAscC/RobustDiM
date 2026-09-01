@@ -1,9 +1,10 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 
 class Tee:
-    """Print each line to stdout and append it to a fresh log file."""
+    """Print each line, timestamped, to stdout and a fresh log file."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -11,9 +12,10 @@ class Tee:
         self.path.write_text("", encoding="utf-8")
 
     def __call__(self, msg: str = "") -> None:
-        print(msg)
+        line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
+        print(line)
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(msg + "\n")
+            f.write(line + "\n")
 
 
 def save_json(path: str | Path, data: object) -> None:
