@@ -10,13 +10,14 @@ from robustdim.directions import METHODS, construct, unit
 from robustdim.metrics import pairwise_stability
 from robustdim.model import HookedLM
 from robustdim.plots import save_stability_bar
+from robustdim.report import Tee, save_json
 
 
 def _n_for(name: str, cfg: dict) -> int:
     return cfg["data"]["dim_n"] if name == "dim" else cfg["data"]["cov_n"]
 
 
-def run(cfg: dict) -> dict[str, float]:
+def run(cfg: dict, tee: Tee) -> dict[str, float]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
     pool = min(len(pos_texts), len(neg_texts), cfg["stability"]["pool_n"])
@@ -31,6 +32,7 @@ def run(cfg: dict) -> dict[str, float]:
     out_dir = Path(cfg["io"]["checkpoints"])
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = cfg["methods"]
+    scores_log = Path(cfg["io"]["logs"]) / "stability.json"
     for name in METHODS:
         vecs = []
         n = _n_for(name, cfg)
@@ -50,6 +52,8 @@ def run(cfg: dict) -> dict[str, float]:
             torch.save(v, out_dir / f"{name}_r{r}.pt")
             vecs.append(v)
         scores[name] = pairwise_stability(vecs)
+        tee(f"{name}: stability={scores[name]:.4f}")
+        save_json(scores_log, scores)
     return scores
 
 
@@ -59,17 +63,13 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     cfg = load_config(args.config)
+    tee = Tee(Path(cfg["io"]["logs"]) / "stability.log")
     if args.dry_run:
-        print(
-            json.dumps({"experiment": "stability", "methods": list(METHODS)}, indent=2)
-        )
+        tee(json.dumps({"experiment": "stability", "methods": list(METHODS)}, indent=2))
         return
-    scores = run(cfg)
-    log = Path(cfg["io"]["logs"]) / "stability.json"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(json.dumps(scores, indent=2))
+    scores = run(cfg, tee)
     save_stability_bar(scores, Path(cfg["io"]["figs"]) / "stability.pdf")
-    print(json.dumps(scores, indent=2))
+    tee(json.dumps(scores, indent=2))
 
 
 if __name__ == "__main__":
