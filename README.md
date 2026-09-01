@@ -6,14 +6,14 @@ Requires Python 3.13+. Use [uv](https://docs.astral.sh/uv/) for the virtual envi
 
 ```bash
 uv sync
-uv run robustdim
 ```
 
 ## Files Architecture
 
-```
+```text
 src/: source code
 tests/: test code
+notebooks/: jupyter notebooks
 scripts/: sh files to run the code
 logs/: log for different results
 figs/: figs for experiments
@@ -25,5 +25,10 @@ AGENTS.md: agent rules
 pyproject.toml: project metadata and build config
 .python-version: Python version pin
 .gitignore: git ignore rules
-.ignore: extra ignore rules
+.ignore: ! un-ignore gitignored paths so agents can find them
+LICENSE: MIT license text
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
