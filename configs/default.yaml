@@ -32,8 +32,10 @@ steering:
 eval:
   harmbench_config: contextual
   harmbench_n: 100
-  judge_model: DeepSeek-V3.2
-  judge_url: https://api.sambanova.ai/v1/chat/completions
+  judge_model: gemini-3.7-flash
+  judge_project: nairr-260106-571547
+  # gemini-3.x only serves from the multi-region endpoint
+  judge_location: global
   mmlu_split: test
   mmlu_n: null
 

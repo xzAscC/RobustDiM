@@ -13,4 +13,6 @@ def test_default_config_matches_slides() -> None:
     assert cfg["methods"]["lowvar_frac"] == 0.01
     assert cfg["eval"]["harmbench_config"] == "contextual"
     assert cfg["eval"]["harmbench_n"] == 100
-    assert cfg["eval"]["judge_model"] == "DeepSeek-V3.2"
+    assert cfg["eval"]["judge_model"] == "gemini-3.7-flash"
+    assert cfg["eval"]["judge_project"] == "nairr-260106-571547"
+    assert cfg["eval"]["judge_location"] == "global"
