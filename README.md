@@ -12,7 +12,12 @@ uv sync
 
 Do not run these until the config has been checked.
 
-Put `SAMBANOVA_API_KEY` in `.env` (gitignored) before the tradeoff run.
+The judge runs `gemini-3.7-flash` on Vertex AI via Application Default Credentials (no API key). The 3.x models are served from the `global` endpoint only:
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project nairr-260106-571547
+```
 
 ```bash
 export SAMBANOVA_API_KEY=...
