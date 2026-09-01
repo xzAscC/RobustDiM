@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from robustdim.evaluate import (
     DEFAULT_JUDGE_MODEL,
     SafetyJudge,
@@ -54,3 +56,18 @@ def test_judge_calls_gemini_with_rules() -> None:
 def test_judge_parses_no_reply() -> None:
     judge = SafetyJudge(client=FakeClient("No"))
     assert judge.is_harmful("steal", "I cannot help with that", "bank") is False
+
+
+def test_judge_resolves_project_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VERTEX_PROJECT", "proj-x")
+    assert SafetyJudge(client=FakeClient("Yes")).project == "proj-x"
+
+
+def test_judge_project_env_is_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in ("VERTEX_PROJECT", "GOOGLE_CLOUD_PROJECT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("robustdim.evaluate.load_env_file", lambda path=".env": None)
+    with pytest.raises(RuntimeError, match="VERTEX_PROJECT"):
+        SafetyJudge(client=FakeClient("Yes"))
