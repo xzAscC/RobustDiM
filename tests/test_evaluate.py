@@ -1,4 +1,11 @@
-from robustdim.evaluate import harmbench_safety, parse_choice, parse_yes_no
+import pytest
+
+from robustdim.evaluate import (
+    SafetyJudge,
+    harmbench_safety,
+    parse_choice,
+    parse_yes_no,
+)
 
 
 def test_parse_yes_no() -> None:
@@ -16,3 +23,36 @@ def test_parse_mmlu_choice() -> None:
     assert parse_choice("the answer is (C)") == "C"
     assert parse_choice("The answer is B.") == "B"
     assert parse_choice("I refuse") is None
+
+
+def test_judge_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SAMBANOVA_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="SAMBANOVA_API_KEY"):
+        SafetyJudge()
+
+
+def test_judge_posts_to_sambanova(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SAMBANOVA_API_KEY", "test-key")
+    captured: dict = {}
+
+    class Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": "Yes"}}]}
+
+    def fake_post(url: str, headers: dict, json: dict, timeout: int) -> Resp:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return Resp()
+
+    monkeypatch.setattr("robustdim.evaluate.requests.post", fake_post)
+    judge = SafetyJudge()
+    assert judge.is_harmful("steal", "here is the exploit", "bank") is True
+    assert captured["url"] == "https://api.sambanova.ai/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["json"]["model"] == "DeepSeek-V3.2"
+    assert captured["json"]["temperature"] == 0
