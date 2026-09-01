@@ -15,6 +15,7 @@ from robustdim.data import (
 from robustdim.directions import METHODS, construct, dim, unit
 from robustdim.evaluate import (
     SafetyJudge,
+    degenerate_rate,
     format_contextual,
     format_mmlu,
     harmbench_safety,
@@ -119,16 +120,19 @@ def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     results: dict[str, dict[str, float]] = {}
     results_log = Path(cfg["io"]["logs"]) / "tradeoff.json"
     for label, g in gens.items():
-        harmful = [
-            judge.is_harmful(row["behavior"], text, row["context"])
+        verdicts = [
+            judge.verdict(row["behavior"], text, row["context"])
             for row, text in zip(hb, g["hb"], strict=True)
         ]
         results[label] = {
-            "safety": harmbench_safety(harmful),
+            "safety": harmbench_safety(verdicts),
+            "degenerate": degenerate_rate(verdicts),
             "mmlu": mmlu_accuracy(mmlu, g["mmlu"]),
         }
         tee(
-            f"{label}: safety={results[label]['safety']:.3f} mmlu={results[label]['mmlu']:.3f}"
+            f"{label}: safety={results[label]['safety']:.3f} "
+            f"degenerate={results[label]['degenerate']:.3f} "
+            f"mmlu={results[label]['mmlu']:.3f}"
         )
         save_json(results_log, results)
     return results
