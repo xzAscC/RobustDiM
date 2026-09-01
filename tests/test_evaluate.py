@@ -1,5 +1,9 @@
+import os
+from pathlib import Path
+
 import pytest
 
+from robustdim.config import load_env_file
 from robustdim.evaluate import (
     SafetyJudge,
     harmbench_safety,
@@ -27,8 +31,18 @@ def test_parse_mmlu_choice() -> None:
 
 def test_judge_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SAMBANOVA_API_KEY", raising=False)
+    monkeypatch.setattr("robustdim.config.load_env_file", lambda path=".env": None)
+    monkeypatch.setattr("robustdim.evaluate.load_env_file", lambda path=".env": None)
     with pytest.raises(RuntimeError, match="SAMBANOVA_API_KEY"):
         SafetyJudge()
+
+
+def test_load_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SAMBANOVA_API_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("SAMBANOVA_API_KEY=from-file\n")
+    load_env_file(env)
+    assert os.environ["SAMBANOVA_API_KEY"] == "from-file"
 
 
 def test_judge_posts_to_sambanova(monkeypatch: pytest.MonkeyPatch) -> None:
