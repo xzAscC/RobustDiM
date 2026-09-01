@@ -4,3 +4,13 @@
 
 # latex files
 69e5bc6d27002aeac07372b4/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# experiment outputs
+logs/*
+!logs/.gitkeep

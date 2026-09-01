@@ -7,3 +7,4 @@
 5. If you are unsure, ask me first. If you cannot ask me, search the website or documentation. Do not guess.
 6. Save figures as PDF first. Do not save as PNG.
 7. Keep code clean and concise.
+8. Experiments must log incrementally: persist partial results (JSON) after each completed method or condition, and tee every print to both stdout and a log file under `logs/`. Never buffer all output until the end.

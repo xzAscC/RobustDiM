@@ -8,6 +8,26 @@ Requires Python 3.13+. Use [uv](https://docs.astral.sh/uv/) for the virtual envi
 uv sync
 ```
 
+## Experiments
+
+Do not run these until the config has been checked.
+
+The judge runs `gemini-3.7-flash` on Vertex AI via Application Default Credentials (no API key). The 3.x models are served from the `global` endpoint only. The GCP project is read from `VERTEX_PROJECT` (or `GOOGLE_CLOUD_PROJECT`), e.g. from a gitignored `.env`:
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project "$VERTEX_PROJECT"
+```
+
+```bash
+uv run python -m robustdim.stability --dry-run
+uv run python -m robustdim.tradeoff --dry-run
+bash scripts/run_stability.sh
+bash scripts/run_tradeoff.sh
+```
+
+Figures are written as PDF under `figs/`. JSON logs go under `logs/`.
+
 ## Files Architecture
 
 ```text
