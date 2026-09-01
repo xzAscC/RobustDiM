@@ -102,7 +102,8 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
 
     judge = SafetyJudge(
         cfg["eval"]["judge_model"],
-        api_url=cfg["eval"]["judge_url"],
+        project=cfg["eval"]["judge_project"],
+        location=cfg["eval"]["judge_location"],
     )
     results: dict[str, dict[str, float]] = {}
     for label, g in gens.items():
