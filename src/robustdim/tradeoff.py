@@ -14,7 +14,7 @@ from robustdim.data import (
 )
 from robustdim.directions import METHODS, construct, unit
 from robustdim.evaluate import (
-    HarmBenchJudge,
+    SafetyJudge,
     format_contextual,
     format_mmlu,
     harmbench_safety,
@@ -100,7 +100,10 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    judge = HarmBenchJudge(cfg["eval"]["judge"], dtype=cfg["eval"]["judge_dtype"])
+    judge = SafetyJudge(
+        cfg["eval"]["judge_model"],
+        api_url=cfg["eval"]["judge_url"],
+    )
     results: dict[str, dict[str, float]] = {}
     for label, g in gens.items():
         harmful = [
