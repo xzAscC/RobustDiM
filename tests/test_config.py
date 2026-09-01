@@ -14,6 +14,6 @@ def test_default_config_matches_slides() -> None:
     assert cfg["eval"]["harmbench_config"] == "contextual"
     assert cfg["eval"]["harmbench_n"] == 100
     assert cfg["eval"]["judge_model"] == "gemini-3.7-flash"
-    assert cfg["eval"]["judge_project"] == "nairr-260106-571547"
+    assert cfg["eval"]["judge_project"] is None
     assert cfg["eval"]["judge_location"] == "global"
     assert cfg["eval"]["mmlu_n"] == 50
