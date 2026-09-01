@@ -33,7 +33,7 @@ eval:
   harmbench_config: contextual
   harmbench_n: 100
   judge_model: gemini-3.7-flash
-  judge_project: nairr-260106-571547
+  judge_project: null
   # gemini-3.x only serves from the multi-region endpoint
   judge_location: global
   mmlu_split: test
