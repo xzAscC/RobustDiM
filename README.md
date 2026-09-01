@@ -12,7 +12,10 @@ uv sync
 
 Do not run these until the config has been checked.
 
+Set `SAMBANOVA_API_KEY` before the tradeoff run (DeepSeek-V3.2 judge via SambaNova).
+
 ```bash
+export SAMBANOVA_API_KEY=...
 uv run python -m robustdim.stability --dry-run
 uv run python -m robustdim.tradeoff --dry-run
 bash scripts/run_stability.sh
