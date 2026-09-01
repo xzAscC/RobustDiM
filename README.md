@@ -8,6 +8,19 @@ Requires Python 3.13+. Use [uv](https://docs.astral.sh/uv/) for the virtual envi
 uv sync
 ```
 
+## Experiments
+
+Do not run these until the config has been checked.
+
+```bash
+uv run python -m robustdim.stability --dry-run
+uv run python -m robustdim.tradeoff --dry-run
+bash scripts/run_stability.sh
+bash scripts/run_tradeoff.sh
+```
+
+Figures are written as PDF under `figs/`. JSON logs go under `logs/`.
+
 ## Files Architecture
 
 ```text
