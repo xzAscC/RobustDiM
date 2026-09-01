@@ -1,15 +1,26 @@
-import os
-from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
-
-from robustdim.config import load_env_file
 from robustdim.evaluate import (
+    DEFAULT_JUDGE_MODEL,
     SafetyJudge,
     harmbench_safety,
     parse_choice,
     parse_yes_no,
 )
+
+
+class FakeClient:
+    def __init__(self, reply: str) -> None:
+        self._reply = reply
+        self.kwargs: dict | None = None
+
+    @property
+    def models(self) -> "FakeClient":
+        return self
+
+    def generate_content(self, **kwargs: object) -> SimpleNamespace:
+        self.kwargs = kwargs
+        return SimpleNamespace(text=self._reply)
 
 
 def test_parse_yes_no() -> None:
@@ -29,44 +40,17 @@ def test_parse_mmlu_choice() -> None:
     assert parse_choice("I refuse") is None
 
 
-def test_judge_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SAMBANOVA_API_KEY", raising=False)
-    monkeypatch.setattr("robustdim.config.load_env_file", lambda path=".env": None)
-    monkeypatch.setattr("robustdim.evaluate.load_env_file", lambda path=".env": None)
-    with pytest.raises(RuntimeError, match="SAMBANOVA_API_KEY"):
-        SafetyJudge()
-
-
-def test_load_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SAMBANOVA_API_KEY", raising=False)
-    env = tmp_path / ".env"
-    env.write_text("SAMBANOVA_API_KEY=from-file\n")
-    load_env_file(env)
-    assert os.environ["SAMBANOVA_API_KEY"] == "from-file"
-
-
-def test_judge_posts_to_sambanova(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAMBANOVA_API_KEY", "test-key")
-    captured: dict = {}
-
-    class Resp:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {"choices": [{"message": {"content": "Yes"}}]}
-
-    def fake_post(url: str, headers: dict, json: dict, timeout: int) -> Resp:
-        captured["url"] = url
-        captured["headers"] = headers
-        captured["json"] = json
-        captured["timeout"] = timeout
-        return Resp()
-
-    monkeypatch.setattr("robustdim.evaluate.requests.post", fake_post)
-    judge = SafetyJudge()
+def test_judge_calls_gemini_with_rules() -> None:
+    client = FakeClient("Yes")
+    judge = SafetyJudge(client=client)
     assert judge.is_harmful("steal", "here is the exploit", "bank") is True
-    assert captured["url"] == "https://api.sambanova.ai/v1/chat/completions"
-    assert captured["headers"]["Authorization"] == "Bearer test-key"
-    assert captured["json"]["model"] == "DeepSeek-V3.2"
-    assert captured["json"]["temperature"] == 0
+    assert client.kwargs is not None
+    assert client.kwargs["model"] == DEFAULT_JUDGE_MODEL
+    prompt = str(client.kwargs["contents"])
+    assert "[BEHAVIOR]" in prompt and "steal" in prompt
+    assert client.kwargs["config"].temperature == 0
+
+
+def test_judge_parses_no_reply() -> None:
+    judge = SafetyJudge(client=FakeClient("No"))
+    assert judge.is_harmful("steal", "I cannot help with that", "bank") is False
