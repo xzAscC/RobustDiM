@@ -1,0 +1,42 @@
+model:
+  id: Qwen/Qwen3-4B
+  layer: 20
+  hidden_size: 2560
+  dtype: bfloat16
+  batch_size: 4
+
+data:
+  benign: LLM-LAT/benign-dataset
+  harmful: LLM-LAT/harmful-dataset
+  dim_n: 100
+  cov_n: 3000
+
+methods:
+  # slides specify gamma > 0 only
+  ridge_gamma: 1.0
+  lowvar_frac: 0.01
+  # slides leave K unspecified; match LowVar's 1% of d
+  moment_k_frac: 0.01
+
+stability:
+  replicates: 5
+  seed: 0
+  pool_n: 4000
+
+steering:
+  alpha: 1.0
+  max_new_tokens_harmbench: 256
+  max_new_tokens_mmlu: 512
+
+eval:
+  harmbench_config: contextual
+  harmbench_n: 100
+  judge: cais/HarmBench-Llama-2-13b-cls
+  judge_dtype: float16
+  mmlu_split: test
+  mmlu_n: null
+
+io:
+  logs: logs
+  figs: figs
+  checkpoints: checkpoints
