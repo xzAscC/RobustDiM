@@ -12,7 +12,7 @@ uv sync
 
 Do not run these until the config has been checked.
 
-Set `SAMBANOVA_API_KEY` before the tradeoff run (DeepSeek-V3.2 judge via SambaNova).
+Put `SAMBANOVA_API_KEY` in `.env` (gitignored) before the tradeoff run.
 
 ```bash
 export SAMBANOVA_API_KEY=...
