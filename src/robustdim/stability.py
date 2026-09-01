@@ -5,28 +5,39 @@ from pathlib import Path
 import torch
 
 from robustdim.config import load_config
-from robustdim.data import load_class_prompts, sample_indices
-from robustdim.directions import METHODS, construct, unit
+from robustdim.data import disjoint_subsets, load_class_prompts, sample_indices
+from robustdim.directions import METHODS, construct, dim, unit
 from robustdim.metrics import pairwise_stability
 from robustdim.model import HookedLM
 from robustdim.plots import save_stability_bar
 from robustdim.report import Tee, save_json
 
 
-def _n_for(name: str, cfg: dict) -> int:
-    return cfg["data"]["dim_n"] if name == "dim" else cfg["data"]["cov_n"]
-
-
 def run(cfg: dict, tee: Tee) -> dict[str, float]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
-    pool = min(len(pos_texts), len(neg_texts), cfg["stability"]["pool_n"])
-    if pool < cfg["data"]["cov_n"]:
-        raise ValueError(f"need {cfg['data']['cov_n']} examples, got {pool}")
+    replicates = cfg["stability"]["replicates"]
+    dim_n = cfg["data"]["dim_n"]
+    cov_n = cfg["data"]["cov_n"]
+    seed = cfg["stability"]["seed"]
+    pos_pool = min(len(pos_texts), cfg["stability"]["pool_n"])
+    neg_pool = min(len(neg_texts), max(cov_n, replicates * dim_n))
+    if pos_pool < replicates * cov_n:
+        raise ValueError(
+            f"need {replicates}x{cov_n} disjoint positives, pool is {pos_pool}"
+        )
+    if neg_pool < max(cov_n, replicates * dim_n):
+        raise ValueError(
+            f"need max({cov_n}, {replicates}x{dim_n}) negatives, pool is {neg_pool}"
+        )
+
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     layer = cfg["model"]["layer"]
-    pos_h = lm.extract(pos_texts[:pool], layer, cfg["model"]["batch_size"])
-    neg_h = lm.extract(neg_texts[:pool], layer, cfg["model"]["batch_size"])
+    pos_h = lm.extract(pos_texts[:pos_pool], layer, cfg["model"]["batch_size"])
+    neg_h = lm.extract(neg_texts[:neg_pool], layer, cfg["model"]["batch_size"])
+
+    pos_blocks = disjoint_subsets(pos_pool, cov_n, replicates, seed)
+    neg_dim_blocks = disjoint_subsets(neg_pool, dim_n, replicates, seed + 2)
 
     scores: dict[str, float] = {}
     out_dir = Path(cfg["io"]["checkpoints"])
@@ -35,15 +46,19 @@ def run(cfg: dict, tee: Tee) -> dict[str, float]:
     scores_log = Path(cfg["io"]["logs"]) / "stability.json"
     for name in METHODS:
         vecs = []
-        n = _n_for(name, cfg)
-        for r in range(cfg["stability"]["replicates"]):
-            idx_p = sample_indices(pool, n, seed=cfg["stability"]["seed"] + 17 * r)
-            idx_n = sample_indices(pool, n, seed=cfg["stability"]["seed"] + 31 * r + 1)
+        for r in range(replicates):
+            d = dim(pos_h[pos_blocks[r][:dim_n]], neg_h[neg_dim_blocks[r]])
+            neg_idx = (
+                sample_indices(neg_pool, cov_n, seed + 31 * r + 1)
+                if name in ("lda", "ridge")
+                else None
+            )
             v = unit(
                 construct(
                     name,
-                    pos_h[idx_p],
-                    neg_h[idx_n],
+                    pos_h[pos_blocks[r]],
+                    None if neg_idx is None else neg_h[neg_idx],
+                    d,
                     ridge_gamma=methods["ridge_gamma"],
                     lowvar_frac=methods["lowvar_frac"],
                     moment_k_frac=methods["moment_k_frac"],

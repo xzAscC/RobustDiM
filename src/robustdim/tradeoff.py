@@ -12,7 +12,7 @@ from robustdim.data import (
     load_mmlu_pro,
     sample_indices,
 )
-from robustdim.directions import METHODS, construct, unit
+from robustdim.directions import METHODS, construct, dim, unit
 from robustdim.evaluate import (
     SafetyJudge,
     format_contextual,
@@ -33,17 +33,20 @@ def _directions(cfg: dict, lm: HookedLM) -> dict[str, torch.Tensor]:
     layer = cfg["model"]["layer"]
     pos_h = lm.extract(pos_texts[:cov_n], layer, cfg["model"]["batch_size"])
     neg_h = lm.extract(neg_texts[:cov_n], layer, cfg["model"]["batch_size"])
-    dim_idx = sample_indices(cov_n, dim_n, seed=cfg["stability"]["seed"])
+    seed = cfg["stability"]["seed"]
+    d = dim(
+        pos_h[sample_indices(cov_n, dim_n, seed)],
+        neg_h[sample_indices(cov_n, dim_n, seed + 1)],
+    )
     methods = cfg["methods"]
     out: dict[str, torch.Tensor] = {}
     for name in METHODS:
-        pos = pos_h[dim_idx] if name == "dim" else pos_h
-        neg = neg_h[dim_idx] if name == "dim" else neg_h
         out[name] = unit(
             construct(
                 name,
-                pos,
-                neg,
+                pos_h,
+                neg_h,
+                d,
                 ridge_gamma=methods["ridge_gamma"],
                 lowvar_frac=methods["lowvar_frac"],
                 moment_k_frac=methods["moment_k_frac"],
