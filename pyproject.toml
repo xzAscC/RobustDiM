@@ -11,9 +11,9 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.0",
     "datasets>=3.0",
+    "google-genai>=2.21.0",
     "matplotlib>=3.9",
     "pyyaml>=6.0",
-    "requests>=2.32",
     "torch>=2.6",
     "transformers>=4.51",
 ]
