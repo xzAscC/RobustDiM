@@ -13,7 +13,7 @@ data:
 
 methods:
   # slides specify gamma > 0 only
-  ridge_gamma: 1.0
+  ridge_gamma: 0.01
   lowvar_frac: 0.01
   # slides leave K unspecified; match LowVar's 1% of d
   moment_k_frac: 0.01
@@ -25,14 +25,15 @@ stability:
 
 steering:
   alpha: 1.0
+  greedy: true
   max_new_tokens_harmbench: 256
   max_new_tokens_mmlu: 512
 
 eval:
   harmbench_config: contextual
   harmbench_n: 100
-  judge: cais/HarmBench-Llama-2-13b-cls
-  judge_dtype: float16
+  judge_model: DeepSeek-V3.2
+  judge_url: https://api.sambanova.ai/v1/chat/completions
   mmlu_split: test
   mmlu_n: null
 
