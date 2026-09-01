@@ -26,7 +26,9 @@ from robustdim.plots import save_tradeoff
 from robustdim.report import Tee, save_json
 
 
-def _directions(cfg: dict, lm: HookedLM) -> dict[str, torch.Tensor]:
+def _directions(
+    cfg: dict, lm: HookedLM
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
     cov_n = cfg["data"]["cov_n"]
@@ -53,16 +55,17 @@ def _directions(cfg: dict, lm: HookedLM) -> dict[str, torch.Tensor]:
                 moment_k_frac=methods["moment_k_frac"],
             )
         )
-    return out
+    return out, pos_h.norm(dim=1).mean()
 
 
 def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
-    dirs = _directions(cfg, lm)
+    dirs, avg_norm = _directions(cfg, lm)
     ckpt = Path(cfg["io"]["checkpoints"])
     ckpt.mkdir(parents=True, exist_ok=True)
     for name, v in dirs.items():
         torch.save(v, ckpt / f"{name}.pt")
+    tee(f"average activation norm: {avg_norm:.2f}")
 
     hb = load_harmbench_contextual(cfg["eval"]["harmbench_n"])
     mmlu = load_mmlu_pro(
@@ -74,7 +77,7 @@ def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     mmlu_tokens = cfg["steering"]["max_new_tokens_mmlu"]
     settings = [
         ("baseline", None, 0.0),
-        *((name, dirs[name], alpha) for name in METHODS),
+        *((name, dirs[name] * avg_norm, alpha) for name in METHODS),
     ]
 
     def gen_all(label: str, prompts: list[str], direction, scale: int, tokens: int):
