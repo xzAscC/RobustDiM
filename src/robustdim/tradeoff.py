@@ -22,6 +22,7 @@ from robustdim.evaluate import (
 )
 from robustdim.model import HookedLM
 from robustdim.plots import save_tradeoff
+from robustdim.report import Tee, save_json
 
 
 def _directions(cfg: dict, lm: HookedLM) -> dict[str, torch.Tensor]:
@@ -51,7 +52,7 @@ def _directions(cfg: dict, lm: HookedLM) -> dict[str, torch.Tensor]:
     return out
 
 
-def run(cfg: dict) -> dict[str, dict[str, float]]:
+def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     dirs = _directions(cfg, lm)
     ckpt = Path(cfg["io"]["checkpoints"])
@@ -72,30 +73,35 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
         *((name, dirs[name], alpha) for name in METHODS),
     ]
 
+    def gen_all(label: str, prompts: list[str], direction, scale: int, tokens: int):
+        outs = []
+        for i, user in enumerate(prompts):
+            outs.append(lm.generate(user, layer, direction, scale, tokens))
+            if (i + 1) % 10 == 0:
+                tee(f"{label}: {i + 1}/{len(prompts)} generated")
+        return outs
+
     gens: dict[str, dict[str, list[str]]] = {}
+    gens_log = Path(cfg["io"]["logs"]) / "tradeoff_generations.json"
     for label, direction, scale in settings:
         gens[label] = {
-            "hb": [
-                lm.generate(
-                    format_contextual(row["behavior"], row["context"]),
-                    layer,
-                    direction,
-                    scale,
-                    hb_tokens,
-                )
-                for row in hb
-            ],
-            "mmlu": [
-                lm.generate(
-                    format_mmlu(row["question"], row["options"]),
-                    layer,
-                    direction,
-                    scale,
-                    mmlu_tokens,
-                )
-                for row in mmlu
-            ],
+            "hb": gen_all(
+                label,
+                [format_contextual(r["behavior"], r["context"]) for r in hb],
+                direction,
+                scale,
+                hb_tokens,
+            ),
+            "mmlu": gen_all(
+                label,
+                [format_mmlu(r["question"], r["options"]) for r in mmlu],
+                direction,
+                scale,
+                mmlu_tokens,
+            ),
         }
+        tee(f"{label}: generation done")
+        save_json(gens_log, gens)
 
     del lm
     gc.collect()
@@ -108,6 +114,7 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
         location=cfg["eval"]["judge_location"],
     )
     results: dict[str, dict[str, float]] = {}
+    results_log = Path(cfg["io"]["logs"]) / "tradeoff.json"
     for label, g in gens.items():
         harmful = [
             judge.is_harmful(row["behavior"], text, row["context"])
@@ -117,6 +124,10 @@ def run(cfg: dict) -> dict[str, dict[str, float]]:
             "safety": harmbench_safety(harmful),
             "mmlu": mmlu_accuracy(mmlu, g["mmlu"]),
         }
+        tee(
+            f"{label}: safety={results[label]['safety']:.3f} mmlu={results[label]['mmlu']:.3f}"
+        )
+        save_json(results_log, results)
     return results
 
 
@@ -126,18 +137,14 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     cfg = load_config(args.config)
+    tee = Tee(Path(cfg["io"]["logs"]) / "tradeoff.log")
     if args.dry_run:
-        print(
-            json.dumps({"experiment": "tradeoff", "methods": list(METHODS)}, indent=2)
-        )
+        tee(json.dumps({"experiment": "tradeoff", "methods": list(METHODS)}, indent=2))
         return
-    results = run(cfg)
-    log = Path(cfg["io"]["logs"]) / "tradeoff.json"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(json.dumps(results, indent=2))
+    results = run(cfg, tee)
     points = {k: (v["safety"], v["mmlu"]) for k, v in results.items()}
     save_tradeoff(points, Path(cfg["io"]["figs"]) / "tradeoff.pdf")
-    print(json.dumps(results, indent=2))
+    tee(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":
