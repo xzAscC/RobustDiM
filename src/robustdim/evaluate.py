@@ -5,6 +5,8 @@ from typing import Any
 
 import requests
 
+from robustdim.config import load_env_file
+
 LETTERS = "ABCDEFGHIJ"
 _CHOICE = re.compile(r"(?:the answer is|answer is)\s*\(?([A-J])\)?", re.I)
 API_KEY_ENV = "SAMBANOVA_API_KEY"
@@ -86,6 +88,7 @@ class SafetyJudge:
     ) -> None:
         self.model_id = model_id
         self.api_url = api_url
+        load_env_file()
         self.api_key = api_key or os.environ.get(API_KEY_ENV)
         if not self.api_key:
             raise RuntimeError(f"set {API_KEY_ENV}")
