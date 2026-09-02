@@ -7,4 +7,5 @@
 5. If you are unsure, ask me first. If you cannot ask me, search the website or documentation. Do not guess.
 6. Save figures as PDF first. Do not save as PNG.
 7. Keep code clean and concise.
-8. Experiments must log incrementally: persist partial results (JSON) after each completed method or condition, and tee every print to both stdout and a log file under `logs/`. Never buffer all output until the end.
+8. Experiments must log incrementally: persist partial results (JSON) after each completed method or condition, and tee every print to both stdout and a log file under `logs/`. Never buffer all output until the end. `logs/` stores log files only; do not put other files there.
+9. Before using a GPU, queue the job with `gpu-queue` (PATH command). Machine-level FIFO: one job at a time, gated on free GPU memory. `gpu-queue add <name> <command...>` to enqueue; `list` / `remove` / `status` / `start` / `stop` as needed. Do not run GPU jobs directly.
