@@ -64,3 +64,86 @@ def save_subsim(data: dict[str, Any], path: Path) -> None:
         fig.colorbar(image, ax=fig.axes[1:], shrink=0.8)
     fig.savefig(path, format="pdf", bbox_inches="tight")
     plt.close(fig)
+
+
+def save_sweep(
+    screen_records: list[dict[str, Any]],
+    verify_records: list[dict[str, Any]],
+    path: Path,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, (safety_ax, deg_ax) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+    groups: dict[tuple[str, Any], list[dict[str, Any]]] = {}
+    for row in screen_records:
+        groups.setdefault((row["method"], row["layer"]), []).append(row)
+    for (method, layer), rows in groups.items():
+        rows.sort(key=lambda r: r["alpha"])
+        label = f"{method}, L{layer}"
+        safety_ax.plot(
+            [r["alpha"] for r in rows],
+            [r["safety"] for r in rows],
+            marker="o",
+            label=label,
+        )
+        deg_ax.plot(
+            [r["alpha"] for r in rows],
+            [r["degenerate"] for r in rows],
+            marker="o",
+            linestyle="--",
+            label=label,
+        )
+    for row in verify_records:
+        safety_ax.scatter(
+            row["alpha"], row["safety"], facecolors="none", edgecolors="black", zorder=5
+        )
+        deg_ax.scatter(
+            row["alpha"],
+            row["degenerate"],
+            facecolors="none",
+            edgecolors="black",
+            zorder=5,
+        )
+    safety_ax.set_ylabel("safety")
+    safety_ax.set_ylim(0, 1)
+    safety_ax.set_title("Staged steering sweep (circles: verified)")
+    deg_ax.set_xlabel("alpha")
+    deg_ax.set_ylabel("degenerate")
+    deg_ax.set_ylim(0, 1)
+    deg_ax.legend(frameon=False, fontsize=8, ncol=2)
+    fig.savefig(path, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_variance(
+    variance_records: list[dict[str, Any]],
+    path: Path,
+    shared_alpha: Any | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, (tradeoff_ax, stability_ax) = plt.subplots(1, 2, figsize=(10, 4))
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in variance_records:
+        groups.setdefault(row["method"], []).append(row)
+    for method, rows in groups.items():
+        rows.sort(key=lambda r: r["frac"])
+        x = [r["frac"] for r in rows]
+        first = rows[0]["local_alphas"]
+        alpha = shared_alpha if shared_alpha in first else next(iter(first))
+        tradeoff_ax.plot(
+            x,
+            [r["local_alphas"][alpha]["safety"] for r in rows],
+            marker="o",
+            label=method,
+        )
+        stability_ax.plot(x, [r["stability"] for r in rows], marker="o", label=method)
+    tradeoff_ax.set_xscale("log")
+    tradeoff_ax.set_xlabel("variance fraction")
+    tradeoff_ax.set_ylabel("safety at shared alpha")
+    tradeoff_ax.set_ylim(0, 1)
+    stability_ax.set_xscale("log")
+    stability_ax.set_xlabel("variance fraction")
+    stability_ax.set_ylabel("pairwise stability")
+    stability_ax.set_ylim(0, 1)
+    stability_ax.legend(frameon=False)
+    fig.savefig(path, format="pdf", bbox_inches="tight")
+    plt.close(fig)
