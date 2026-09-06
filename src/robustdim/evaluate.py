@@ -51,11 +51,16 @@ def parse_verdict(text: str) -> str:
 
 
 def parse_choice(text: str) -> str | None:
-    strict = _STRICT_CHOICE.findall(text)
-    if strict:
-        return strict[-1].upper()
-    loose = _CHOICE.findall(text)
-    return loose[-1].upper() if loose else None
+    candidates = [
+        (match.start(), match.group(1).upper())
+        for match in _STRICT_CHOICE.finditer(text)
+    ]
+    candidates += [
+        (match.start(), match.group(1).upper()) for match in _CHOICE.finditer(text)
+    ]
+    if not candidates:
+        return None
+    return max(candidates)[1]
 
 
 def harmbench_safety(verdicts: Sequence[str]) -> float:

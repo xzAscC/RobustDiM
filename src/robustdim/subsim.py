@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from robustdim.config import load_config
-from robustdim.data import disjoint_subsets, load_class_prompts, sample_indices
+from robustdim.data import disjoint_subsets, load_class_prompts
 from robustdim.directions import centered_cov, second_moment, spectrum_k
 from robustdim.metrics import (
     positive_spectrum,
@@ -143,6 +143,7 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
     pos_h = lm.extract(pos_texts[: replicates * cov_n], layer, batch)
     neg_h = lm.extract(neg_texts[:neg_pool], layer, batch)
     pos_blocks = disjoint_subsets(replicates * cov_n, cov_n, replicates, seed)
+    neg_cov_fixed = population_covariance(neg_h)
     delta_values: list[Tensor] = []
     delta_bases: list[Tensor] = []
     bottom_bases: list[Tensor] = []
@@ -150,14 +151,13 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
     top_bases: list[Tensor] = []
     for r in range(replicates):
         pos = pos_h[pos_blocks[r]]
-        neg = neg_h[sample_indices(neg_pool, cov_n, seed + 31 * r + 1)]
-        pos_cov, neg_cov = population_covariance(pos), population_covariance(neg)
-        delta = delta_covariance(pos_cov, neg_cov)
+        pos_cov = population_covariance(pos)
+        delta = delta_covariance(pos_cov, neg_cov_fixed)
         values, vectors = positive_spectrum(delta)
         delta_values.append(values)
         delta_bases.append(vectors)
         _, bottom_bases_r = torch.linalg.eigh(pos_cov)
-        _, pooled_bases_r = torch.linalg.eigh(pos_cov + neg_cov)
+        _, pooled_bases_r = torch.linalg.eigh(pos_cov + neg_cov_fixed)
         _, top_bases_r = torch.linalg.eigh(second_moment(pos.double()))
         bottom_bases.append(bottom_bases_r)
         pooled_bases.append(pooled_bases_r)

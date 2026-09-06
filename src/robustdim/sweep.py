@@ -15,7 +15,7 @@ from robustdim.data import (
     load_mmlu_pro,
     sample_indices,
 )
-from robustdim.directions import construct, dim, unit
+from robustdim.directions import METHODS, construct, dim, unit
 from robustdim.evaluate import (
     SafetyJudge,
     degenerate_rate,
@@ -51,10 +51,20 @@ REQUIRED_FRAC_METHODS = ("moment_proj", "lowvar")
 
 def _sweep_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     sw = {**DEFAULTS, **cfg.get("sweep", {})}
-    if int(sw["batch_size"]) < 1:
-        raise ValueError(f"sweep batch_size must be >= 1, got {sw['batch_size']}")
+    batch_size = sw["batch_size"]
+    if (
+        not isinstance(batch_size, int)
+        or isinstance(batch_size, bool)
+        or batch_size < 1
+    ):
+        raise ValueError(f"sweep batch_size must be an int >= 1, got {batch_size!r}")
     if not sw["screen_methods"]:
         raise ValueError("sweep screen_methods must not be empty")
+    unknown = [
+        m for m in [*sw["screen_methods"], *sw["frac_methods"]] if m not in METHODS
+    ]
+    if unknown:
+        raise ValueError(f"unknown steering methods in sweep config: {unknown}")
     missing = [m for m in REQUIRED_FRAC_METHODS if m not in sw["frac_methods"]]
     if missing:
         raise ValueError(
@@ -114,26 +124,6 @@ def stage_counts(config: dict[str, Any]) -> dict[str, int]:
         "verify_candidates": verify_candidates,
         "baseline": 1,
         "fraction": len(sw["fractions"]) * len(sw["frac_methods"]),
-    }
-
-
-def variance_record(
-    method: str,
-    frac: float,
-    local: dict[Any, dict[str, float]],
-    mmlu: float,
-    stability_score: float,
-    cos_dim: float,
-    subsim_dim: float | None = None,
-) -> dict[str, Any]:
-    return {
-        "method": method,
-        "frac": frac,
-        "local_alphas": local,
-        "mmlu": mmlu,
-        "stability": stability_score,
-        "cos_dim": cos_dim,
-        "subsim_dim": cos_dim * cos_dim if subsim_dim is None else subsim_dim,
     }
 
 

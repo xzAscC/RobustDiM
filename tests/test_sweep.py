@@ -9,7 +9,6 @@ from robustdim.sweep import (
     select_fracs,
     select_top_per_method,
     stage_counts,
-    variance_record,
 )
 
 
@@ -59,21 +58,6 @@ def test_fraction_grid_is_read_from_config() -> None:
         )["fraction"]
         == 2
     )
-
-
-def test_variance_record_contains_stability_cosine_and_tradeoff() -> None:
-    record = variance_record(
-        "lowvar", 0.01, {10: {"safety": 0.8, "degenerate": 0.1}}, 0.7, 0.49, 0.6
-    )
-    assert record == {
-        "method": "lowvar",
-        "frac": 0.01,
-        "local_alphas": {10: {"safety": 0.8, "degenerate": 0.1}},
-        "mmlu": 0.7,
-        "stability": 0.49,
-        "cos_dim": 0.6,
-        "subsim_dim": 0.36,
-    }
 
 
 def test_one_dimensional_subsim_matches_squared_cosine() -> None:
