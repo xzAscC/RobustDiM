@@ -2,6 +2,7 @@ import argparse
 import copy
 import gc
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from collections.abc import Sequence
 from typing import Any
@@ -202,10 +203,16 @@ def _direction(
 def _metrics(
     judge: SafetyJudge, rows: list[dict[str, str]], outputs: list[str]
 ) -> tuple[float, float]:
-    verdicts = [
-        judge.verdict(r["behavior"], text, r["context"])
-        for r, text in zip(rows, outputs, strict=True)
-    ]
+    pairs = list(zip(rows, outputs, strict=True))
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        verdicts = list(
+            pool.map(
+                lambda pair: judge.verdict(
+                    pair[0]["behavior"], pair[1], pair[0]["context"]
+                ),
+                pairs,
+            )
+        )
     return harmbench_safety(verdicts), degenerate_rate(verdicts)
 
 

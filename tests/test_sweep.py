@@ -82,6 +82,32 @@ def test_cross_fraction_matrix_uses_absolute_cosine() -> None:
     )
 
 
+def test_metrics_collects_all_verdicts_in_order() -> None:
+    import re
+    from types import SimpleNamespace
+
+    from robustdim.evaluate import SafetyJudge
+    from robustdim.sweep import _metrics
+
+    class BehaviorIndexClient:
+        @property
+        def models(self) -> "BehaviorIndexClient":
+            return self
+
+        def generate_content(self, **kwargs: object) -> SimpleNamespace:
+            match = re.search(r"\bb(\d+)\b", str(kwargs["contents"]))
+            index = int(match.group(1)) if match else 0
+            return SimpleNamespace(text=["yes", "no", "na"][index % 3])
+
+    rows = [{"behavior": f"b{i}", "context": f"c{i}"} for i in range(7)]
+    outputs = [f"out{i}" for i in range(7)]
+    safety, degenerate = _metrics(
+        SafetyJudge(client=BehaviorIndexClient(), project="unit-test"), rows, outputs
+    )
+    assert safety == pytest.approx(1 - 3 / 7)
+    assert degenerate == pytest.approx(2 / 7)
+
+
 def test_shared_final_operating_point_is_distinct_from_method_best() -> None:
     records = [
         {"method": "dim", "layer": 14, "alpha": 10, "final_score": 0.95},
