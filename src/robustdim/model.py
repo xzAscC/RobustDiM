@@ -22,6 +22,21 @@ def last_prompt_hook(direction: Tensor, alpha: float, pos: int) -> Any:
     return hook
 
 
+def prefill_hook(direction: Tensor, alpha: float, pos: int, width: int) -> Any:
+    inner = last_prompt_hook(direction, alpha, pos)
+    consumed = False
+
+    def hook(module: Any, inp: Any, output: Any) -> Any:
+        nonlocal consumed
+        tensor = output[0] if isinstance(output, tuple) else output
+        if tensor.shape[1] != width or consumed:
+            return output
+        consumed = True
+        return inner(module, inp, output)
+
+    return hook
+
+
 class HookedLM:
     def __init__(self, model_id: str, dtype: str = "bfloat16") -> None:
         torch_dtype = getattr(torch, dtype)
@@ -74,26 +89,47 @@ class HookedLM:
         alpha: float = 0.0,
         max_new_tokens: int = 256,
     ) -> str:
-        tok = self._encode([chat_text(self.tokenizer, user)])
-        handle = None
-        if direction is not None and alpha != 0.0:
-            pos = tok["input_ids"].shape[1] - 1
-            handle = self.layers[layer].register_forward_hook(
-                last_prompt_hook(direction, alpha, pos)
-            )
-        try:
-            generate = getattr(self.model, "generate")
-            out = generate(
-                **tok,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=self.tokenizer.pad_token_id,
-            )
-        finally:
-            if handle is not None:
-                handle.remove()
-        return str(
-            self.tokenizer.decode(
-                out[0, tok["input_ids"].shape[1] :], skip_special_tokens=True
-            )
-        )
+        return self.generate_batch(
+            [user], layer, direction, alpha, max_new_tokens, batch_size=1
+        )[0]
+
+    @torch.inference_mode()
+    def generate_batch(
+        self,
+        users: list[str],
+        layer: int,
+        direction: Tensor | None = None,
+        alpha: float = 0.0,
+        max_new_tokens: int = 256,
+        batch_size: int = 4,
+    ) -> list[str]:
+        outputs: list[str] = []
+        previous_padding_side = self.tokenizer.padding_side
+        for start in range(0, len(users), batch_size):
+            handle = None
+            self.tokenizer.padding_side = "left"
+            try:
+                batch = users[start : start + batch_size]
+                texts = [chat_text(self.tokenizer, user) for user in batch]
+                tok = self._encode(texts)
+                width = tok["input_ids"].shape[1]
+                if direction is not None and alpha != 0.0:
+                    handle = self.layers[layer].register_forward_hook(
+                        prefill_hook(direction, alpha, width - 1, width)
+                    )
+                generate = getattr(self.model, "generate")
+                out = generate(
+                    **tok,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+                outputs.extend(
+                    str(self.tokenizer.decode(row[width:], skip_special_tokens=True))
+                    for row in out
+                )
+            finally:
+                if handle is not None:
+                    handle.remove()
+                self.tokenizer.padding_side = previous_padding_side
+        return outputs

@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 from pathlib import Path
+from typing import Any, Callable
 
 import torch
 
@@ -27,7 +28,7 @@ from robustdim.report import Tee, save_json
 
 
 def _directions(
-    cfg: dict, lm: HookedLM
+    cfg: dict[str, Any], lm: HookedLM
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
@@ -58,7 +59,65 @@ def _directions(
     return out, pos_h.norm(dim=1).mean()
 
 
-def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
+def generate_all(
+    lm: Any,
+    prompts: list[str],
+    layer: int,
+    direction: torch.Tensor | None,
+    scale: float,
+    tokens: int,
+    batch_size: int,
+    tee: Callable[[str], None],
+    label: str,
+) -> list[str]:
+    outputs: list[str] = []
+    for start in range(0, len(prompts), batch_size):
+        users_chunk = prompts[start : start + batch_size]
+        outputs.extend(
+            lm.generate_batch(users_chunk, layer, direction, scale, tokens, batch_size)
+        )
+        tee(f"{label}: {len(outputs)}/{len(prompts)} generated")
+    return outputs
+
+
+def _settings_signature(cfg: dict[str, Any]) -> dict[str, Any]:
+    methods = cfg["methods"]
+    return {
+        "model": cfg["model"]["id"],
+        "layer": cfg["model"]["layer"],
+        "alpha": cfg["steering"]["alpha"],
+        "moment_k_frac": methods.get("moment_k_frac"),
+        "lowvar_frac": methods.get("lowvar_frac"),
+        "harmbench_n": cfg["eval"]["harmbench_n"],
+        "mmlu_n": cfg["eval"].get("mmlu_n"),
+        "mmlu_split": cfg["eval"].get("mmlu_split"),
+        "hb_tokens": cfg["steering"]["max_new_tokens_harmbench"],
+        "mmlu_tokens": cfg["steering"]["max_new_tokens_mmlu"],
+        "seed": cfg["stability"]["seed"],
+    }
+
+
+def reusable_gens(
+    prior: dict[str, Any], label: str, n_hb: int, n_mmlu: int
+) -> dict[str, list[str]] | None:
+    """Return a prior generation row when both halves are complete."""
+    row = prior.get(label)
+    if not isinstance(row, dict):
+        return None
+    hb, mmlu_gens = row.get("hb"), row.get("mmlu")
+    if (
+        isinstance(hb, list)
+        and isinstance(mmlu_gens, list)
+        and len(hb) == n_hb
+        and len(mmlu_gens) == n_mmlu
+    ):
+        return {"hb": hb, "mmlu": mmlu_gens}
+    return None
+
+
+def run(
+    cfg: dict[str, Any], tee: Tee, fresh: bool = False
+) -> dict[str, dict[str, float]]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     dirs, avg_norm = _directions(cfg, lm)
     ckpt = Path(cfg["io"]["checkpoints"])
@@ -75,36 +134,59 @@ def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     alpha = cfg["steering"]["alpha"]
     hb_tokens = cfg["steering"]["max_new_tokens_harmbench"]
     mmlu_tokens = cfg["steering"]["max_new_tokens_mmlu"]
+    batch_size = cfg.get("sweep", {}).get("batch_size", 4)
     settings = [
         ("baseline", None, 0.0),
         *((name, dirs[name] * avg_norm, alpha) for name in METHODS),
     ]
 
-    def gen_all(label: str, prompts: list[str], direction, scale: int, tokens: int):
-        outs = []
-        for i, user in enumerate(prompts):
-            outs.append(lm.generate(user, layer, direction, scale, tokens))
-            if (i + 1) % 10 == 0:
-                tee(f"{label}: {i + 1}/{len(prompts)} generated")
-        return outs
-
     gens: dict[str, dict[str, list[str]]] = {}
     gens_log = Path(cfg["io"]["logs"]) / "tradeoff_generations.json"
+    meta_log = Path(cfg["io"]["logs"]) / "tradeoff_meta.json"
+    signature = _settings_signature(cfg)
+    prior_gens: dict[str, Any] = {}
+    if not fresh and meta_log.is_file():
+        try:
+            meta = json.loads(meta_log.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            meta = {}
+        if isinstance(meta, dict) and meta.get("signature") == signature:
+            try:
+                loaded = json.loads(gens_log.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                loaded = {}
+            if isinstance(loaded, dict):
+                prior_gens = loaded
+    save_json(meta_log, {"signature": signature})
     for label, direction, scale in settings:
+        reused = reusable_gens(prior_gens, label, len(hb), len(mmlu))
+        if reused is not None:
+            gens[label] = reused
+            tee(f"{label}: generations reused")
+            save_json(gens_log, gens)
+            continue
         gens[label] = {
-            "hb": gen_all(
-                label,
+            "hb": generate_all(
+                lm,
                 [format_contextual(r["behavior"], r["context"]) for r in hb],
+                layer,
                 direction,
                 scale,
                 hb_tokens,
-            ),
-            "mmlu": gen_all(
+                batch_size,
+                tee,
                 label,
+            ),
+            "mmlu": generate_all(
+                lm,
                 [format_mmlu(r["question"], r["options"]) for r in mmlu],
+                layer,
                 direction,
                 scale,
                 mmlu_tokens,
+                batch_size,
+                tee,
+                label,
             ),
         }
         tee(f"{label}: generation done")
@@ -145,13 +227,14 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--fresh", action="store_true")
     args = p.parse_args()
     cfg = load_config(args.config)
     tee = Tee(Path(cfg["io"]["logs"]) / "tradeoff.log")
     if args.dry_run:
         tee(json.dumps({"experiment": "tradeoff", "methods": list(METHODS)}, indent=2))
         return
-    results = run(cfg, tee)
+    results = run(cfg, tee, fresh=args.fresh)
     points = {k: (v["safety"], v["mmlu"]) for k, v in results.items()}
     save_tradeoff(points, Path(cfg["io"]["figs"]) / "tradeoff.pdf")
     tee(json.dumps(results, indent=2))

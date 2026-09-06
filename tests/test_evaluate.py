@@ -26,6 +26,40 @@ class FakeClient:
         return SimpleNamespace(text=self._reply)
 
 
+class FlakyClient(FakeClient):
+    def __init__(self, reply: str, failures: int) -> None:
+        super().__init__(reply)
+        self.calls = 0
+        self.failures = failures
+
+    def generate_content(self, **kwargs: object) -> SimpleNamespace:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError("transient judge outage")
+        return super().generate_content(**kwargs)
+
+
+def test_judge_verdict_retries_transient_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("robustdim.evaluate.time.sleep", lambda _s: None)
+    client = FlakyClient("Yes", failures=2)
+    judge = SafetyJudge(client=client)
+    assert judge.verdict("steal", "here is the exploit", "bank") == "yes"
+    assert client.calls == 3
+
+
+def test_judge_verdict_raises_after_all_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("robustdim.evaluate.time.sleep", lambda _s: None)
+    client = FlakyClient("Yes", failures=99)
+    judge = SafetyJudge(client=client)
+    with pytest.raises(RuntimeError, match="transient judge outage"):
+        judge.verdict("steal", "here is the exploit", "bank")
+    assert client.calls == 3
+
+
 def test_parse_verdict_three_way() -> None:
     assert parse_verdict("Yes") == "yes"
     assert parse_verdict("yes.") == "yes"
@@ -48,6 +82,30 @@ def test_parse_mmlu_choice() -> None:
     assert parse_choice("the answer is (C)") == "C"
     assert parse_choice("The answer is B.") == "B"
     assert parse_choice("I refuse") is None
+
+
+def test_parse_choice_rejects_following_word_letters() -> None:
+    assert parse_choice("the answer is based on the data") is None
+    assert parse_choice("the answer is car") is None
+
+
+def test_parse_choice_takes_chronologically_last_match() -> None:
+    assert parse_choice("the answer is (B). Actually, the answer is C.") == "C"
+    assert parse_choice("the answer is C. Wait, the answer is (B).") == "B"
+
+
+def test_parse_choice_uses_last_answer_match() -> None:
+    text = "First I think the answer is (B). After checking, the answer is (C)."
+    assert parse_choice(text) == "C"
+
+
+def test_parse_choice_accepts_markdown_wrapped_letter() -> None:
+    assert parse_choice("the answer is **(F)**") == "F"
+    assert parse_choice("The answer is **B**.") == "B"
+
+
+def test_parse_choice_returns_none_without_answer() -> None:
+    assert parse_choice("The reasoning continues and is cut off mid senten") is None
 
 
 def test_judge_prompt_states_na_rule_explicitly() -> None:
