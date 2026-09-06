@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 from pathlib import Path
+from typing import Any, Callable
 
 import torch
 
@@ -27,7 +28,7 @@ from robustdim.report import Tee, save_json
 
 
 def _directions(
-    cfg: dict, lm: HookedLM
+    cfg: dict[str, Any], lm: HookedLM
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
@@ -58,7 +59,28 @@ def _directions(
     return out, pos_h.norm(dim=1).mean()
 
 
-def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
+def generate_all(
+    lm: Any,
+    prompts: list[str],
+    layer: int,
+    direction: torch.Tensor | None,
+    scale: float,
+    tokens: int,
+    batch_size: int,
+    tee: Callable[[str], None],
+    label: str,
+) -> list[str]:
+    outputs: list[str] = []
+    for start in range(0, len(prompts), batch_size):
+        users_chunk = prompts[start : start + batch_size]
+        outputs.extend(
+            lm.generate_batch(users_chunk, layer, direction, scale, tokens, batch_size)
+        )
+        tee(f"{label}: {len(outputs)}/{len(prompts)} generated")
+    return outputs
+
+
+def run(cfg: dict[str, Any], tee: Tee) -> dict[str, dict[str, float]]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     dirs, avg_norm = _directions(cfg, lm)
     ckpt = Path(cfg["io"]["checkpoints"])
@@ -75,36 +97,37 @@ def run(cfg: dict, tee: Tee) -> dict[str, dict[str, float]]:
     alpha = cfg["steering"]["alpha"]
     hb_tokens = cfg["steering"]["max_new_tokens_harmbench"]
     mmlu_tokens = cfg["steering"]["max_new_tokens_mmlu"]
+    batch_size = cfg.get("sweep", {}).get("batch_size", 4)
     settings = [
         ("baseline", None, 0.0),
         *((name, dirs[name] * avg_norm, alpha) for name in METHODS),
     ]
 
-    def gen_all(label: str, prompts: list[str], direction, scale: int, tokens: int):
-        outs = []
-        for i, user in enumerate(prompts):
-            outs.append(lm.generate(user, layer, direction, scale, tokens))
-            if (i + 1) % 10 == 0:
-                tee(f"{label}: {i + 1}/{len(prompts)} generated")
-        return outs
-
     gens: dict[str, dict[str, list[str]]] = {}
     gens_log = Path(cfg["io"]["logs"]) / "tradeoff_generations.json"
     for label, direction, scale in settings:
         gens[label] = {
-            "hb": gen_all(
-                label,
+            "hb": generate_all(
+                lm,
                 [format_contextual(r["behavior"], r["context"]) for r in hb],
+                layer,
                 direction,
                 scale,
                 hb_tokens,
-            ),
-            "mmlu": gen_all(
+                batch_size,
+                tee,
                 label,
+            ),
+            "mmlu": generate_all(
+                lm,
                 [format_mmlu(r["question"], r["options"]) for r in mmlu],
+                layer,
                 direction,
                 scale,
                 mmlu_tokens,
+                batch_size,
+                tee,
+                label,
             ),
         }
         tee(f"{label}: generation done")

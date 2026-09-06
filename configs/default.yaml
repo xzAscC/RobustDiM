@@ -23,6 +23,22 @@ stability:
   seed: 0
   pool_n: 16000
 
+subsim:
+  tau: 0.95
+  ks: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+
+sweep:
+  layers: [14, 17, 20, 23]
+  alphas: [10, 20, 30, 40]
+  screen_methods: [dim, moment_proj, moment]
+  hb_screen_n: 50
+  top_per_method: 2
+  mmlu_penalty: 1.0
+  fractions: [0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2]
+  frac_methods: [moment_proj, lowvar]
+  alpha_neighbors: 1
+  batch_size: 4
+
 steering:
   alpha: 10.0
   greedy: true

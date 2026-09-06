@@ -22,9 +22,22 @@ gcloud auth application-default set-quota-project "$VERTEX_PROJECT"
 ```bash
 uv run python -m robustdim.stability --dry-run
 uv run python -m robustdim.tradeoff --dry-run
+uv run python -m robustdim.subsim --dry-run
+uv run python -m robustdim.sweep --dry-run
 bash scripts/run_stability.sh
 bash scripts/run_tradeoff.sh
+bash scripts/run_subsim.sh
+bash scripts/run_sweep.sh
 ```
+
+Real runs must be queued for GPU access, for example:
+
+```bash
+gpu-queue add robustdim-subsim bash scripts/run_subsim.sh
+gpu-queue add robustdim-sweep bash scripts/run_sweep.sh
+```
+
+Dry-runs are CPU-only and safe to run directly.
 
 Figures are written as PDF under `figs/`. JSON logs go under `logs/`.
 
