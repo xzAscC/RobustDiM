@@ -173,6 +173,72 @@ def cross_fraction_matrix(directions: dict[Any, Tensor]) -> dict[str, Any]:
     }
 
 
+def _signature(cfg: dict[str, Any]) -> dict[str, Any]:
+    sw = {**DEFAULTS, **cfg.get("sweep", {})}
+    return {
+        "model": cfg.get("model", {}).get("id"),
+        "seed": cfg.get("stability", {}).get("seed"),
+        "mmlu_n": cfg.get("eval", {}).get("mmlu_n"),
+        "mmlu_split": cfg.get("eval", {}).get("mmlu_split"),
+        **{
+            key: sw[key]
+            for key in (
+                "layers",
+                "alphas",
+                "screen_methods",
+                "hb_screen_n",
+                "fractions",
+                "frac_methods",
+            )
+        },
+    }
+
+
+def load_prior(path: Path, signature: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a prior sweep result when it matches ``signature``."""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict) or data.get("signature") != signature:
+        return None
+    return data
+
+
+def pending_conditions(
+    grid: list[dict[str, Any]], done: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    done_keys = {(r["method"], r["layer"], r["alpha"]) for r in done}
+    return [
+        condition
+        for condition in grid
+        if (condition["method"], condition["layer"], condition["alpha"])
+        not in done_keys
+    ]
+
+
+def variance_row_complete(row: dict[str, Any]) -> bool:
+    return all(
+        row.get(key) is not None
+        for key in ("stability", "cos_dim", "subsim_dim", "mmlu")
+    ) and bool(row.get("local_alphas"))
+
+
+def find_verify_row(
+    prior: list[dict[str, Any]], candidate: dict[str, Any]
+) -> dict[str, Any] | None:
+    for row in prior:
+        if (
+            row.get("method") == candidate["method"]
+            and row.get("layer") == candidate["layer"]
+            and row.get("alpha") == candidate["alpha"]
+        ):
+            return row
+    return None
+
+
 def _direction(
     cfg: dict[str, Any],
     pos_h: torch.Tensor,
@@ -230,7 +296,7 @@ def _judged(
         raise
 
 
-def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
+def run(cfg: dict[str, Any], tee: Tee, fresh: bool = False) -> dict[str, Any]:
     sw = _sweep_cfg(cfg)
     logs = Path(cfg["io"]["logs"])
     logs.mkdir(parents=True, exist_ok=True)
@@ -245,35 +311,48 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
-    result: dict[str, Any] = {
-        "experiment": "sweep",
-        "screen": [],
-        "verify": [],
-        "method_best": {},
-        "shared": {},
-        "variance": [],
-        "selected_fracs": {},
-    }
+    signature = _signature(cfg)
+    prior = None if fresh else load_prior(sweep_log, signature)
+    if prior is not None:
+        result = prior
+        tee(
+            f"resuming sweep: {len(prior.get('screen', []))} screen, "
+            f"{len(prior.get('verify', []))} verify, "
+            f"{len(prior.get('variance', []))} variance rows reused"
+        )
+    else:
+        result: dict[str, Any] = {
+            "experiment": "sweep",
+            "signature": signature,
+            "screen": [],
+            "verify": [],
+            "method_best": {},
+            "shared": {},
+            "variance": [],
+            "selected_fracs": {},
+        }
+        save_json(sweep_log, result)
     directions: dict[int, dict[str, torch.Tensor]] = {}
     norms: dict[int, torch.Tensor] = {}
-    for layer in sw["layers"]:
-        pos = lm.extract(
-            pos_texts[: cfg["data"]["cov_n"]],
-            layer,
-            cfg["model"].get("batch_size", sw["batch_size"]),
-        )
-        neg = lm.extract(
-            neg_texts[: cfg["data"]["cov_n"]],
-            layer,
-            cfg["model"].get("batch_size", sw["batch_size"]),
-        )
+
+    def ensure_directions(layer: int) -> None:
+        if layer in directions:
+            return
+        batch = cfg["model"].get("batch_size", sw["batch_size"])
+        pos = lm.extract(pos_texts[: cfg["data"]["cov_n"]], layer, batch)
+        neg = lm.extract(neg_texts[: cfg["data"]["cov_n"]], layer, batch)
         directions[layer] = {}
         norms[layer] = pos.norm(dim=1).mean()
         for method in sw["screen_methods"]:
             directions[layer][method], _ = _direction(cfg, pos, neg, method)
-        for condition in [
-            r for r in screen_grid([layer], sw["alphas"], sw["screen_methods"])
-        ]:
+
+    grid = screen_grid(sw["layers"], sw["alphas"], sw["screen_methods"])
+    pending = pending_conditions(grid, result["screen"])
+    if not pending:
+        tee("screen: all conditions already complete")
+    for layer in sorted({c["layer"] for c in pending}):
+        ensure_directions(layer)
+        for condition in [c for c in pending if c["layer"] == layer]:
             out = lm.generate_batch(
                 hb_prompts,
                 layer,
@@ -306,23 +385,39 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
         cfg["eval"]["mmlu_split"], cfg["eval"].get("mmlu_n"), cfg["stability"]["seed"]
     )
     mmlu_prompts = [format_mmlu(r["question"], r["options"]) for r in mmlu]
-    baseline = mmlu_accuracy(
-        mmlu,
-        lm.generate_batch(
-            mmlu_prompts,
-            cfg["model"]["layer"],
-            None,
-            0,
-            cfg["steering"]["max_new_tokens_mmlu"],
-            sw["batch_size"],
-        ),
-    )
-    result["baseline_mmlu"] = baseline
-    save_json(sweep_log, result)
-    tee(f"baseline mmlu={baseline:.3f}")
+    if result.get("baseline_mmlu") is None:
+        result["baseline_mmlu"] = mmlu_accuracy(
+            mmlu,
+            lm.generate_batch(
+                mmlu_prompts,
+                cfg["model"]["layer"],
+                None,
+                0,
+                cfg["steering"]["max_new_tokens_mmlu"],
+                sw["batch_size"],
+            ),
+        )
+        save_json(sweep_log, result)
+        tee(f"baseline mmlu={result['baseline_mmlu']:.3f}")
+    else:
+        tee(f"baseline mmlu reused: {result['baseline_mmlu']:.3f}")
+    baseline = result["baseline_mmlu"]
     for method, candidates in top.items():
         result["method_best"][method] = None
         for candidate in candidates:
+            reused = find_verify_row(result["verify"], candidate)
+            if reused is not None:
+                result["method_best"][method] = max(
+                    result["method_best"][method] or reused,
+                    reused,
+                    key=lambda r: r["final_score"],
+                )
+                tee(
+                    f"verify {method} layer={candidate['layer']}"
+                    f" alpha={candidate['alpha']} reused"
+                )
+                continue
+            ensure_directions(candidate["layer"])
             tee(
                 f"verify {method} layer={candidate['layer']} alpha={candidate['alpha']}"
             )
@@ -382,6 +477,23 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
 
     for method in sw["frac_methods"]:
         for frac in sw["fractions"]:
+            existing = next(
+                (
+                    r
+                    for r in result["variance"]
+                    if r.get("method") == method and r.get("frac") == frac
+                ),
+                None,
+            )
+            d, norm = _direction(cfg, pos_big[:cov_n], neg_h[:cov_n], method, frac)
+            frac_dirs.setdefault(method, {})[frac] = d.detach().cpu()
+            if existing is not None and variance_row_complete(existing):
+                variance_tee(f"{method} frac={frac} reused")
+                continue
+            if existing is not None:
+                result["variance"] = [
+                    r for r in result["variance"] if r is not existing
+                ]
             row: dict[str, Any] = {"method": method, "frac": frac, "local_alphas": {}}
             result["variance"].append(row)
             _save_variance()
@@ -414,8 +526,6 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
                 / rep
             )
             _save_variance()
-            d, norm = _direction(cfg, pos_big[:cov_n], neg_h[:cov_n], method, frac)
-            frac_dirs.setdefault(method, {})[frac] = d.detach().cpu()
             for alpha in alphas:
                 safety, deg = _judged(
                     judge,
@@ -465,7 +575,7 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
     cfg2["steering"]["alpha"] = shared_alpha
     cfg2["methods"]["moment_k_frac"] = result["selected_fracs"]["moment_proj"]["frac"]
     cfg2["methods"]["lowvar_frac"] = result["selected_fracs"]["lowvar"]["frac"]
-    final = tradeoff.run(cfg2, tee)
+    final = tradeoff.run(cfg2, tee, fresh=fresh)
     save_tradeoff(
         {k: (v["safety"], v["mmlu"]) for k, v in final.items()},
         Path(cfg["io"]["figs"]) / "tradeoff.pdf",
@@ -490,6 +600,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--fresh", action="store_true")
     args = parser.parse_args()
     cfg = load_config(args.config)
     tee = Tee(Path(cfg["io"]["logs"]) / "sweep.log")
@@ -509,7 +620,7 @@ def main() -> None:
             )
         )
         return
-    run(cfg, tee)
+    run(cfg, tee, fresh=args.fresh)
 
 
 if __name__ == "__main__":

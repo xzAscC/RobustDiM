@@ -39,6 +39,11 @@ gpu-queue add robustdim-sweep bash scripts/run_sweep.sh
 
 Dry-runs are CPU-only and safe to run directly.
 
+The sweep and tradeoff runs resume automatically: completed screen conditions,
+verified candidates, variance fractions, and generation rows stored under
+`logs/` are reused when the config matches, so an interrupted run continues
+where it stopped. Pass `--fresh` to force a full re-run.
+
 Figures are written as PDF under `figs/`. JSON logs go under `logs/`.
 
 ## Files Architecture

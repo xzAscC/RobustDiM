@@ -1,5 +1,6 @@
 import pytest
 import torch
+from pathlib import Path
 
 from robustdim.metrics import subspace_similarity
 from robustdim.sweep import (
@@ -106,6 +107,88 @@ def test_metrics_collects_all_verdicts_in_order() -> None:
     )
     assert safety == pytest.approx(1 - 3 / 7)
     assert degenerate == pytest.approx(2 / 7)
+
+
+def test_signature_captures_sweep_grid() -> None:
+    from robustdim.sweep import _signature
+
+    base = {
+        "model": {"id": "m"},
+        "eval": {"mmlu_n": 50},
+        "sweep": {"layers": [14], "alphas": [10], "screen_methods": ["dim"]},
+    }
+    other = {
+        "model": {"id": "m"},
+        "eval": {"mmlu_n": 50},
+        "sweep": {"layers": [17], "alphas": [10], "screen_methods": ["dim"]},
+    }
+    assert _signature(base) == _signature(base)
+    assert _signature(base) != _signature(other)
+
+
+def test_load_prior_rejects_missing_or_mismatched(tmp_path: Path) -> None:
+    import json
+
+    from robustdim.sweep import load_prior
+
+    log = tmp_path / "sweep.json"
+    assert load_prior(log, {"a": 1}) is None
+    log.write_text(json.dumps({"screen": [], "signature": {"a": 2}}))
+    assert load_prior(log, {"a": 1}) is None
+    log.write_text(json.dumps({"screen": [1], "signature": {"a": 1}}))
+    assert load_prior(log, {"a": 1}) == {"screen": [1], "signature": {"a": 1}}
+    log.write_text("{not json")
+    assert load_prior(log, {"a": 1}) is None
+
+
+def test_pending_conditions_skip_completed() -> None:
+    from robustdim.sweep import pending_conditions
+
+    grid = [
+        {"method": "dim", "layer": 14, "alpha": 10},
+        {"method": "dim", "layer": 14, "alpha": 20},
+        {"method": "moment", "layer": 17, "alpha": 10},
+    ]
+    done = [{"method": "dim", "layer": 14, "alpha": 10}]
+    pending = pending_conditions(grid, done)
+    assert pending == [
+        {"method": "dim", "layer": 14, "alpha": 20},
+        {"method": "moment", "layer": 17, "alpha": 10},
+    ]
+
+
+def test_variance_row_complete_requires_all_fields() -> None:
+    from robustdim.sweep import variance_row_complete
+
+    complete = {
+        "method": "moment_proj",
+        "frac": 0.01,
+        "local_alphas": {20: {"safety": 0.8, "degenerate": 0.0}},
+        "mmlu": 0.4,
+        "stability": 0.9,
+        "cos_dim": 0.5,
+        "subsim_dim": 0.25,
+    }
+    assert variance_row_complete(complete)
+    assert not variance_row_complete({**complete, "mmlu": None})
+    assert not variance_row_complete({**complete, "local_alphas": {}})
+    partial = dict(complete)
+    del partial["stability"]
+    assert not variance_row_complete(partial)
+
+
+def test_find_verify_row_matches_candidate() -> None:
+    from robustdim.sweep import find_verify_row
+
+    prior = [
+        {"method": "dim", "layer": 14, "alpha": 10, "mmlu": 0.4},
+        {"method": "dim", "layer": 17, "alpha": 20, "mmlu": 0.38},
+    ]
+    hit = find_verify_row(prior, {"method": "dim", "layer": 17, "alpha": 20})
+    assert hit is not None and hit["mmlu"] == 0.38
+    assert (
+        find_verify_row(prior, {"method": "moment", "layer": 17, "alpha": 20}) is None
+    )
 
 
 def test_shared_final_operating_point_is_distinct_from_method_best() -> None:

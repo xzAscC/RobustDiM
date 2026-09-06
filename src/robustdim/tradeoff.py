@@ -80,7 +80,44 @@ def generate_all(
     return outputs
 
 
-def run(cfg: dict[str, Any], tee: Tee) -> dict[str, dict[str, float]]:
+def _settings_signature(cfg: dict[str, Any]) -> dict[str, Any]:
+    methods = cfg["methods"]
+    return {
+        "model": cfg["model"]["id"],
+        "layer": cfg["model"]["layer"],
+        "alpha": cfg["steering"]["alpha"],
+        "moment_k_frac": methods.get("moment_k_frac"),
+        "lowvar_frac": methods.get("lowvar_frac"),
+        "harmbench_n": cfg["eval"]["harmbench_n"],
+        "mmlu_n": cfg["eval"].get("mmlu_n"),
+        "mmlu_split": cfg["eval"].get("mmlu_split"),
+        "hb_tokens": cfg["steering"]["max_new_tokens_harmbench"],
+        "mmlu_tokens": cfg["steering"]["max_new_tokens_mmlu"],
+        "seed": cfg["stability"]["seed"],
+    }
+
+
+def reusable_gens(
+    prior: dict[str, Any], label: str, n_hb: int, n_mmlu: int
+) -> dict[str, list[str]] | None:
+    """Return a prior generation row when both halves are complete."""
+    row = prior.get(label)
+    if not isinstance(row, dict):
+        return None
+    hb, mmlu_gens = row.get("hb"), row.get("mmlu")
+    if (
+        isinstance(hb, list)
+        and isinstance(mmlu_gens, list)
+        and len(hb) == n_hb
+        and len(mmlu_gens) == n_mmlu
+    ):
+        return {"hb": hb, "mmlu": mmlu_gens}
+    return None
+
+
+def run(
+    cfg: dict[str, Any], tee: Tee, fresh: bool = False
+) -> dict[str, dict[str, float]]:
     lm = HookedLM(cfg["model"]["id"], dtype=cfg["model"]["dtype"])
     dirs, avg_norm = _directions(cfg, lm)
     ckpt = Path(cfg["io"]["checkpoints"])
@@ -105,7 +142,29 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, dict[str, float]]:
 
     gens: dict[str, dict[str, list[str]]] = {}
     gens_log = Path(cfg["io"]["logs"]) / "tradeoff_generations.json"
+    meta_log = Path(cfg["io"]["logs"]) / "tradeoff_meta.json"
+    signature = _settings_signature(cfg)
+    prior_gens: dict[str, Any] = {}
+    if not fresh and meta_log.is_file():
+        try:
+            meta = json.loads(meta_log.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            meta = {}
+        if isinstance(meta, dict) and meta.get("signature") == signature:
+            try:
+                loaded = json.loads(gens_log.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                loaded = {}
+            if isinstance(loaded, dict):
+                prior_gens = loaded
+    save_json(meta_log, {"signature": signature})
     for label, direction, scale in settings:
+        reused = reusable_gens(prior_gens, label, len(hb), len(mmlu))
+        if reused is not None:
+            gens[label] = reused
+            tee(f"{label}: generations reused")
+            save_json(gens_log, gens)
+            continue
         gens[label] = {
             "hb": generate_all(
                 lm,
@@ -168,13 +227,14 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--fresh", action="store_true")
     args = p.parse_args()
     cfg = load_config(args.config)
     tee = Tee(Path(cfg["io"]["logs"]) / "tradeoff.log")
     if args.dry_run:
         tee(json.dumps({"experiment": "tradeoff", "methods": list(METHODS)}, indent=2))
         return
-    results = run(cfg, tee)
+    results = run(cfg, tee, fresh=args.fresh)
     points = {k: (v["safety"], v["mmlu"]) for k, v in results.items()}
     save_tradeoff(points, Path(cfg["io"]["figs"]) / "tradeoff.pdf")
     tee(json.dumps(results, indent=2))
