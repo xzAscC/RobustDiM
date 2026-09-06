@@ -4,6 +4,7 @@ import torch
 from robustdim.metrics import subspace_similarity
 from robustdim.sweep import (
     choose_shared,
+    cross_fraction_matrix,
     local_alphas,
     screen_grid,
     select_fracs,
@@ -64,6 +65,21 @@ def test_one_dimensional_subsim_matches_squared_cosine() -> None:
     a = torch.tensor([[1.0], [0.0]])
     b = torch.tensor([[3.0], [4.0]]) / 5
     assert subspace_similarity(a, b) == pytest.approx((3 / 5) ** 2)
+
+
+def test_cross_fraction_matrix_uses_absolute_cosine() -> None:
+    directions = {
+        0.01: torch.tensor([1.0, 0.0]),
+        0.05: torch.tensor([0.0, 3.0]),
+        0.1: torch.tensor([-2.0, 0.0]),
+    }
+    report = cross_fraction_matrix(directions)
+    assert report["fracs"] == [0.01, 0.05, 0.1]
+    assert report["cos_matrix"][0][1] == pytest.approx(0.0)
+    assert report["cos_matrix"][0][2] == pytest.approx(1.0)
+    assert all(
+        m[i][i] == pytest.approx(1.0) for i, m in enumerate([report["cos_matrix"]] * 3)
+    )
 
 
 def test_shared_final_operating_point_is_distinct_from_method_best() -> None:

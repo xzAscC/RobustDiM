@@ -4,8 +4,10 @@ import pytest
 from robustdim.metrics import subspace_similarity
 from robustdim.metrics import positive_spectrum
 from robustdim.subsim import (
+    bottom_energy,
     delta_covariance,
     family_report,
+    lda_attribution,
     pairwise_matrix,
     population_covariance,
     rank_curve,
@@ -63,6 +65,27 @@ def test_pooled_covariance_curve_uses_bottom_eigenvectors() -> None:
     curve = rank_curve([vectors, vectors], [1], position="bottom")
     assert curve[1] == 1.0
     assert torch.equal(vectors[:, :1], torch.tensor([[1.0], [0.0]]))
+
+
+def test_bottom_energy_measures_unit_vector_mass() -> None:
+    basis = torch.eye(3)
+    assert bottom_energy(torch.tensor([2.0, 0.0, 0.0]), basis, 1) == pytest.approx(1.0)
+    assert bottom_energy(torch.tensor([0.0, 5.0, 0.0]), basis, 1) == pytest.approx(0.0)
+    assert bottom_energy(torch.ones(3), basis, 2) == pytest.approx(2 / 3)
+
+
+def test_lda_attribution_reports_stability_and_energy() -> None:
+    torch.manual_seed(5)
+    neg = torch.randn(60, 2)
+    pos_list = [torch.randn(60, 2) + 3.0 for _ in range(2)]
+    covs = [population_covariance(p) for p in pos_list]
+    bases = [torch.linalg.eigh(c + population_covariance(neg))[1] for c in covs]
+    report = lda_attribution(pos_list, neg, bases, [1])
+    assert 0.0 <= report["stability"] <= 1.0
+    assert set(report["bottom_energy"]) == {"1"}
+    assert 0.0 <= report["bottom_energy"]["1"] <= 1.0
+    assert 0.0 <= report["dim_bottom_energy"]["1"] <= 1.0
+    assert 0.0 <= report["dim_stability"] <= 1.0
 
 
 def test_positive_covariance_curve_uses_bottom_eigenvectors() -> None:

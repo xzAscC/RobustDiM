@@ -8,8 +8,9 @@ from torch import Tensor
 
 from robustdim.config import load_config
 from robustdim.data import disjoint_subsets, load_class_prompts
-from robustdim.directions import centered_cov, second_moment, spectrum_k
+from robustdim.directions import centered_cov, dim, lda, second_moment, spectrum_k, unit
 from robustdim.metrics import (
+    pairwise_stability,
     positive_spectrum,
     spectral_k,
     subspace_similarity,
@@ -120,6 +121,37 @@ def family_report(
     }
 
 
+def bottom_energy(v: Tensor, eigvecs: Tensor, k: int) -> float:
+    """Fraction of ``v``'s energy inside the bottom-k eigenspace."""
+    v64 = v.to(torch.float64)
+    proj = eigvecs[:, :k].to(torch.float64).T @ v64
+    return float((proj.square().sum() / v64.square().sum()).item())
+
+
+def lda_attribution(
+    pos_list: list[Tensor], neg: Tensor, bases: list[Tensor], ks: list[int]
+) -> dict[str, Any]:
+    """Attribute LDA instability to the low eigenspace of the pooled scatter."""
+    lda_vecs = [unit(lda(p.double(), neg.double())) for p in pos_list]
+    dim_vecs = [unit(dim(p.double(), neg.double())) for p in pos_list]
+
+    def energy(vecs: list[Tensor]) -> dict[str, float]:
+        return {
+            str(k): sum(
+                bottom_energy(v, b, k) for v, b in zip(vecs, bases, strict=True)
+            )
+            / len(vecs)
+            for k in ks
+        }
+
+    return {
+        "stability": pairwise_stability(lda_vecs),
+        "bottom_energy": energy(lda_vecs),
+        "dim_stability": pairwise_stability(dim_vecs),
+        "dim_bottom_energy": energy(dim_vecs),
+    }
+
+
 def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
     pos_texts = load_class_prompts(cfg["data"]["benign"])
     neg_texts = load_class_prompts(cfg["data"]["harmful"])
@@ -185,6 +217,10 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
         out[name] = family_report(bases, ks, position, pairwise_k=method_k)
         save_json(log_path, out)
         tee(f"{name}: completed (pairwise at k={method_k})")
+    pos_blocks_h = [pos_h[pos_blocks[r]] for r in range(replicates)]
+    out["lda"] = lda_attribution(pos_blocks_h, neg_h, pooled_bases, ks)
+    save_json(log_path, out)
+    tee("lda: attribution completed")
     return out
 
 

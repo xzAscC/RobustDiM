@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import torch
+from torch import Tensor
 
 from robustdim.data import (
     disjoint_subsets,
@@ -158,6 +159,16 @@ def select_fracs(
     return {
         method: max(rows, key=lambda r: r["selection_score"])
         for method, rows in groups.items()
+    }
+
+
+def cross_fraction_matrix(directions: dict[Any, Tensor]) -> dict[str, Any]:
+    """Pairwise |cosine| between directions built at different fractions."""
+    names = list(directions)
+    vecs = [unit(directions[name].double()) for name in names]
+    return {
+        "fracs": names,
+        "cos_matrix": [[abs(float(a @ b)) for b in vecs] for a in vecs],
     }
 
 
@@ -356,6 +367,7 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
     alphas = local_alphas(sw["alphas"], alpha_idx, sw["alpha_neighbors"])
     variance_log = logs / "variance.json"
     variance_tee = Tee(logs / "variance.log")
+    frac_dirs: dict[str, dict[Any, Tensor]] = {}
 
     def _save_variance() -> None:
         save_json(variance_log, result["variance"])
@@ -396,6 +408,7 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
             )
             _save_variance()
             d, norm = _direction(cfg, pos_big[:cov_n], neg_h[:cov_n], method, frac)
+            frac_dirs.setdefault(method, {})[frac] = d.detach().cpu()
             for alpha in alphas:
                 safety, deg = _judged(
                     judge,
@@ -427,6 +440,11 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
             )
             _save_variance()
             variance_tee(f"{method} frac={frac} done")
+    result["cross_fraction"] = {
+        method: cross_fraction_matrix(dirs) for method, dirs in frac_dirs.items()
+    }
+    save_json(sweep_log, result)
+    tee("cross-fraction similarity computed")
     result["selected_fracs"] = select_fracs(
         result["variance"], baseline, sw["mmlu_penalty"], shared_alpha
     )

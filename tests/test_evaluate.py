@@ -26,6 +26,40 @@ class FakeClient:
         return SimpleNamespace(text=self._reply)
 
 
+class FlakyClient(FakeClient):
+    def __init__(self, reply: str, failures: int) -> None:
+        super().__init__(reply)
+        self.calls = 0
+        self.failures = failures
+
+    def generate_content(self, **kwargs: object) -> SimpleNamespace:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise RuntimeError("transient judge outage")
+        return super().generate_content(**kwargs)
+
+
+def test_judge_verdict_retries_transient_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("robustdim.evaluate.time.sleep", lambda _s: None)
+    client = FlakyClient("Yes", failures=2)
+    judge = SafetyJudge(client=client)
+    assert judge.verdict("steal", "here is the exploit", "bank") == "yes"
+    assert client.calls == 3
+
+
+def test_judge_verdict_raises_after_all_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("robustdim.evaluate.time.sleep", lambda _s: None)
+    client = FlakyClient("Yes", failures=99)
+    judge = SafetyJudge(client=client)
+    with pytest.raises(RuntimeError, match="transient judge outage"):
+        judge.verdict("steal", "here is the exploit", "bank")
+    assert client.calls == 3
+
+
 def test_parse_verdict_three_way() -> None:
     assert parse_verdict("Yes") == "yes"
     assert parse_verdict("yes.") == "yes"
