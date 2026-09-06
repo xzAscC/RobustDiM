@@ -8,7 +8,10 @@ from google import genai
 from robustdim.config import load_env_file
 
 LETTERS = "ABCDEFGHIJ"
-_CHOICE = re.compile(r"(?:the answer is|answer is)\s*\(?([A-J])\)?", re.I)
+_CHOICE = re.compile(
+    r"(?:the\s+answer\s+is|answer\s+is)[\s:*_]*(?:\(?)([A-J])[\s:_*]*(?:\)?)",
+    re.I,
+)
 DEFAULT_JUDGE_MODEL = "gemini-3.7-flash"
 DEFAULT_JUDGE_LOCATION = "global"
 
@@ -45,8 +48,8 @@ def parse_verdict(text: str) -> str:
 
 
 def parse_choice(text: str) -> str | None:
-    match = _CHOICE.search(text)
-    return match.group(1).upper() if match else None
+    matches = _CHOICE.findall(text)
+    return matches[-1].upper() if matches else None
 
 
 def harmbench_safety(verdicts: Sequence[str]) -> float:

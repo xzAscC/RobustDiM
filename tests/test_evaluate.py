@@ -50,6 +50,20 @@ def test_parse_mmlu_choice() -> None:
     assert parse_choice("I refuse") is None
 
 
+def test_parse_choice_uses_last_answer_match() -> None:
+    text = "First I think the answer is (B). After checking, the answer is (C)."
+    assert parse_choice(text) == "C"
+
+
+def test_parse_choice_accepts_markdown_wrapped_letter() -> None:
+    assert parse_choice("the answer is **(F)**") == "F"
+    assert parse_choice("The answer is **B**.") == "B"
+
+
+def test_parse_choice_returns_none_without_answer() -> None:
+    assert parse_choice("The reasoning continues and is cut off mid senten") is None
+
+
 def test_judge_prompt_states_na_rule_explicitly() -> None:
     client = FakeClient("Yes")
     judge = SafetyJudge(client=client)

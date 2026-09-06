@@ -17,3 +17,8 @@ def test_default_config_matches_slides() -> None:
     assert cfg["eval"]["judge_project"] is None
     assert cfg["eval"]["judge_location"] == "global"
     assert cfg["eval"]["mmlu_n"] == 50
+
+
+def test_default_config_uses_2048_mmlu_tokens() -> None:
+    cfg = load_config(Path("configs/default.yaml"))
+    assert cfg["steering"]["max_new_tokens_mmlu"] == 2048

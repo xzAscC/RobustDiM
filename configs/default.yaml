@@ -27,7 +27,7 @@ steering:
   alpha: 10.0
   greedy: true
   max_new_tokens_harmbench: 256
-  max_new_tokens_mmlu: 512
+  max_new_tokens_mmlu: 2048
 
 eval:
   harmbench_config: contextual
