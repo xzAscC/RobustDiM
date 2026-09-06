@@ -78,6 +78,14 @@ def test_spectral_k_raises_without_positive_values() -> None:
         spectral_k(torch.tensor([]))
 
 
+def test_spectral_k_rejects_out_of_range_tau() -> None:
+    values = torch.tensor([3.0, 1.0])
+    with pytest.raises(ValueError, match="tau"):
+        spectral_k(values, tau=0.0)
+    with pytest.raises(ValueError, match="tau"):
+        spectral_k(values, tau=1.2)
+
+
 def test_truncated_subsim_uses_common_prefix() -> None:
     a = torch.eye(3, 2)
     b = torch.tensor([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]])

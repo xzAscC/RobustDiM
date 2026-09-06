@@ -42,6 +42,8 @@ def positive_spectrum(sigma: Tensor) -> tuple[Tensor, Tensor]:
 
 
 def spectral_k(values: Tensor, tau: float = 0.95) -> int:
+    if not 0 < tau <= 1:
+        raise ValueError(f"tau must lie in (0, 1], got {tau}")
     positive = values.to(dtype=torch.float64)
     positive = positive[positive > 0]
     if positive.numel() == 0:

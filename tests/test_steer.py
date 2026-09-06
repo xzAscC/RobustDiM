@@ -84,6 +84,8 @@ class _FakeHandle:
 
     def remove(self) -> None:
         self.layer.handles_removed += 1
+        if self.layer.hooks:
+            self.layer.hooks.pop()
 
 
 class _FakeLayer:
@@ -143,7 +145,8 @@ def test_generate_batch_steers_last_padded_position_and_restores_padding(
     )
     assert out == ["generated", "generated"]
     assert lm.tokenizer.padding_side == "right"
-    assert len(layers[0].hooks) == 0 and len(layers[1].hooks) == 1
+    assert all(not layer.hooks for layer in layers)
+    assert layers[1].handles_removed == 1
     torch.testing.assert_close(layers[1].prefill_hidden[:, -1], torch.full((2, 2), 2.0))
     torch.testing.assert_close(layers[1].decode_hidden, torch.zeros(2, 1, 2))
     torch.testing.assert_close(lm.tokenizer.decoded[0], torch.tensor([8, 9]))
@@ -162,3 +165,13 @@ def test_generate_restores_padding_on_error(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(RuntimeError, match="generation failed"):
         lm.generate_batch(["abc"], layer=0)
     assert lm.tokenizer.padding_side == "right"
+
+
+def test_generate_error_removes_hook_and_restores_padding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lm, layers = _fake_lm(monkeypatch, fail=True)
+    with pytest.raises(RuntimeError, match="generation failed"):
+        lm.generate_batch(["abc"], layer=0, direction=torch.ones(2), alpha=10.0)
+    assert lm.tokenizer.padding_side == "right"
+    assert layers[0].hooks == []

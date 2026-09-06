@@ -33,11 +33,12 @@ def save_tradeoff(points: dict[str, tuple[float, float]], path: Path) -> None:
 
 def save_subsim(data: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    families = ("delta", "cov_bottom", "pooled_bottom", "moment_top")
     ks = [int(k) for k in data["ks"]]
-    fig = plt.figure(figsize=(11, 6))
-    grid = fig.add_gridspec(2, 3)
+    fig = plt.figure(figsize=(14, 6))
+    grid = fig.add_gridspec(2, len(families))
     curve_ax = fig.add_subplot(grid[0, :])
-    for name in ("delta", "cov_bottom", "moment_top"):
+    for name in families:
         family = data[name]
         curve = family["curve"]
         points = [(k, curve[str(k)]) for k in ks if curve[str(k)] is not None]
@@ -50,16 +51,18 @@ def save_subsim(data: dict[str, Any], path: Path) -> None:
     curve_ax.set_title("Rank-resolved covariance SubSim")
     curve_ax.legend(frameon=False)
     image = None
-    for name in ("delta", "cov_bottom", "moment_top"):
+    for i, name in enumerate(families):
         matrix = data[name]["pairwise"]
-        ax = fig.add_subplot(grid[1, ("delta", "cov_bottom", "moment_top").index(name)])
+        ax = fig.add_subplot(grid[1, i])
         image = ax.imshow(matrix, vmin=0, vmax=1, cmap="viridis")
         ax.set_title(name)
         ax.set_xticks(range(len(matrix)))
         ax.set_yticks(range(len(matrix)))
-        for i, row in enumerate(matrix):
+        for row_i, row in enumerate(matrix):
             for j, value in enumerate(row):
-                ax.text(j, i, f"{value:.2f}", ha="center", va="center", color="white")
+                ax.text(
+                    j, row_i, f"{value:.2f}", ha="center", va="center", color="white"
+                )
     if image is not None:
         fig.colorbar(image, ax=fig.axes[1:], shrink=0.8)
     fig.savefig(path, format="pdf", bbox_inches="tight")

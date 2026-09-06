@@ -25,7 +25,8 @@ def population_covariance(h: Tensor) -> Tensor:
 
 
 def delta_covariance(pos_cov: Tensor, neg_cov: Tensor) -> Tensor:
-    return population_covariance(pos_cov) - population_covariance(neg_cov)
+    """Difference of two population covariance matrices."""
+    return pos_cov.to(torch.float64) - neg_cov.to(torch.float64)
 
 
 def _oriented_basis(basis: Tensor, k: int, position: str) -> Tensor:
@@ -109,7 +110,7 @@ def family_report(
     ks: list[int],
     position: Literal["top", "bottom", "positive"],
     pairwise_k: int | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "pairwise_k": pairwise_k,
         "curve": {
@@ -145,18 +146,21 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
     delta_values: list[Tensor] = []
     delta_bases: list[Tensor] = []
     bottom_bases: list[Tensor] = []
+    pooled_bases: list[Tensor] = []
     top_bases: list[Tensor] = []
     for r in range(replicates):
         pos = pos_h[pos_blocks[r]]
         neg = neg_h[sample_indices(neg_pool, cov_n, seed + 31 * r + 1)]
         pos_cov, neg_cov = population_covariance(pos), population_covariance(neg)
-        delta = delta_covariance(pos, neg)
+        delta = delta_covariance(pos_cov, neg_cov)
         values, vectors = positive_spectrum(delta)
         delta_values.append(values)
         delta_bases.append(vectors)
         _, bottom_bases_r = torch.linalg.eigh(pos_cov)
+        _, pooled_bases_r = torch.linalg.eigh(pos_cov + neg_cov)
         _, top_bases_r = torch.linalg.eigh(second_moment(pos.double()))
         bottom_bases.append(bottom_bases_r)
+        pooled_bases.append(pooled_bases_r)
         top_bases.append(top_bases_r)
     out: dict[str, object] = {"tau": tau, "ks": ks}
     mean, matrix, widths = tau_pairwise(delta_values, delta_bases, tau)
@@ -174,6 +178,7 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, object]:
         tuple[str, list[Tensor], Literal["top", "bottom", "positive"]], ...
     ] = (
         ("cov_bottom", bottom_bases, "bottom"),
+        ("pooled_bottom", pooled_bases, "bottom"),
         ("moment_top", top_bases, "top"),
     )
     for name, bases, position in family_specs:
@@ -201,7 +206,12 @@ def main() -> None:
                     "tau": tau,
                     "ks": ks,
                     "replicates": cfg["stability"]["replicates"],
-                    "families": ["delta", "cov_bottom", "moment_top"],
+                    "families": [
+                        "delta",
+                        "cov_bottom",
+                        "pooled_bottom",
+                        "moment_top",
+                    ],
                 },
                 indent=2,
             )

@@ -1,5 +1,6 @@
 import argparse
 import copy
+import gc
 import json
 from pathlib import Path
 from collections.abc import Sequence
@@ -45,8 +46,21 @@ DEFAULTS = {
 }
 
 
+REQUIRED_FRAC_METHODS = ("moment_proj", "lowvar")
+
+
 def _sweep_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
-    return {**DEFAULTS, **cfg.get("sweep", {})}
+    sw = {**DEFAULTS, **cfg.get("sweep", {})}
+    if int(sw["batch_size"]) < 1:
+        raise ValueError(f"sweep batch_size must be >= 1, got {sw['batch_size']}")
+    if not sw["screen_methods"]:
+        raise ValueError("sweep screen_methods must not be empty")
+    missing = [m for m in REQUIRED_FRAC_METHODS if m not in sw["frac_methods"]]
+    if missing:
+        raise ValueError(
+            f"sweep frac_methods must include {missing} for the final tradeoff"
+        )
+    return sw
 
 
 def screen_grid(
@@ -92,13 +106,13 @@ def stage_counts(config: dict[str, Any]) -> dict[str, int]:
     sw: dict[str, Any] = {**DEFAULTS, **config}
     methods = sw["screen_methods"]
     screen = len(sw["layers"]) * len(sw["alphas"]) * len(methods)
-    verify = (
-        min(sw["top_per_method"], len(sw["layers"]) * len(sw["alphas"])) * len(methods)
-        + 1
-    )
+    verify_candidates = min(
+        sw["top_per_method"], len(sw["layers"]) * len(sw["alphas"])
+    ) * len(methods)
     return {
         "screen": screen,
-        "verify": verify,
+        "verify_candidates": verify_candidates,
+        "baseline": 1,
         "fraction": len(sw["fractions"]) * len(sw["frac_methods"]),
     }
 
@@ -124,6 +138,8 @@ def variance_record(
 
 
 def choose_shared(verify_records: list[dict[str, Any]]) -> tuple[Any, Any, float]:
+    if not verify_records:
+        raise ValueError("no verified candidates to choose a shared point from")
     best = max(
         verify_records,
         key=lambda r: (r["final_score"], r.get("safety", 0), -r.get("degenerate", 0)),
@@ -140,9 +156,14 @@ def select_fracs(
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in records:
         keys = list(row["local_alphas"])
-        alpha = shared_alpha if shared_alpha is not None else keys[len(keys) // 2]
-        safety = row["local_alphas"][alpha]["safety"]
-        row = {**row, "selection_score": safety - penalty * abs(row["mmlu"] - baseline)}
+        alpha = (
+            shared_alpha
+            if shared_alpha in row["local_alphas"]
+            else keys[len(keys) // 2]
+        )
+        condition = row["local_alphas"][alpha]
+        score = condition["safety"] - condition["degenerate"]
+        row = {**row, "selection_score": score - penalty * abs(row["mmlu"] - baseline)}
         groups.setdefault(row["method"], []).append(row)
     return {
         method: max(rows, key=lambda r: r["selection_score"])
@@ -185,6 +206,20 @@ def _metrics(
         for r, text in zip(rows, outputs, strict=True)
     ]
     return harmbench_safety(verdicts), degenerate_rate(verdicts)
+
+
+def _judged(
+    judge: SafetyJudge,
+    rows: list[dict[str, str]],
+    outputs: list[str],
+    context: str,
+    tee: Tee,
+) -> tuple[float, float]:
+    try:
+        return _metrics(judge, rows, outputs)
+    except Exception:
+        tee(f"judge failed during {context}")
+        raise
 
 
 def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
@@ -239,7 +274,13 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
                 cfg["steering"]["max_new_tokens_harmbench"],
                 sw["batch_size"],
             )
-            safety, deg = _metrics(judge, hb, out)
+            safety, deg = _judged(
+                judge,
+                hb,
+                out,
+                f"screen {condition['method']} layer={layer} alpha={condition['alpha']}",
+                tee,
+            )
             result["screen"].append(
                 {
                     **condition,
@@ -268,9 +309,15 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
             sw["batch_size"],
         ),
     )
+    result["baseline_mmlu"] = baseline
+    save_json(sweep_log, result)
+    tee(f"baseline mmlu={baseline:.3f}")
     for method, candidates in top.items():
         result["method_best"][method] = None
         for candidate in candidates:
+            tee(
+                f"verify {method} layer={candidate['layer']} alpha={candidate['alpha']}"
+            )
             mmlu_out = lm.generate_batch(
                 mmlu_prompts,
                 candidate["layer"],
@@ -319,8 +366,16 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
     alphas = local_alphas(sw["alphas"], alpha_idx, sw["alpha_neighbors"])
     variance_log = logs / "variance.json"
     variance_tee = Tee(logs / "variance.log")
+
+    def _save_variance() -> None:
+        save_json(variance_log, result["variance"])
+        save_json(sweep_log, result)
+
     for method in sw["frac_methods"]:
         for frac in sw["fractions"]:
+            row: dict[str, Any] = {"method": method, "frac": frac, "local_alphas": {}}
+            result["variance"].append(row)
+            _save_variance()
             vecs = [
                 unit(
                     construct(
@@ -334,25 +389,25 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
                 )
                 for r in range(rep)
             ]
-            stability_score = pairwise_stability(vecs)
-            cos_score = (
+            row["stability"] = pairwise_stability(vecs)
+            row["cos_dim"] = (
                 sum(
                     abs(float(unit(a.double()) @ unit(b.double())))
                     for a, b in zip(vecs, dim_vecs, strict=True)
                 )
                 / rep
             )
-            subsim_score = (
+            row["subsim_dim"] = (
                 sum(
                     float(unit(a.double()) @ unit(b.double())) ** 2
                     for a, b in zip(vecs, dim_vecs, strict=True)
                 )
                 / rep
             )
+            _save_variance()
             d, norm = _direction(cfg, pos_big[:cov_n], neg_h[:cov_n], method, frac)
-            local = {}
             for alpha in alphas:
-                safety, deg = _metrics(
+                safety, deg = _judged(
                     judge,
                     hb,
                     lm.generate_batch(
@@ -363,9 +418,13 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
                         cfg["steering"]["max_new_tokens_harmbench"],
                         sw["batch_size"],
                     ),
+                    f"variance {method} frac={frac} alpha={alpha}",
+                    tee,
                 )
-                local[alpha] = {"safety": safety, "degenerate": deg}
-            mm = mmlu_accuracy(
+                row["local_alphas"][alpha] = {"safety": safety, "degenerate": deg}
+                _save_variance()
+                variance_tee(f"{method} frac={frac} alpha={alpha}")
+            row["mmlu"] = mmlu_accuracy(
                 mmlu,
                 lm.generate_batch(
                     mmlu_prompts,
@@ -376,23 +435,16 @@ def run(cfg: dict[str, Any], tee: Tee) -> dict[str, Any]:
                     sw["batch_size"],
                 ),
             )
-            row = variance_record(
-                method,
-                frac,
-                local,
-                mm,
-                stability_score,
-                cos_score,
-                subsim_score,
-            )
-            result["variance"].append(row)
-            save_json(variance_log, result["variance"])
-            save_json(sweep_log, result)
-            variance_tee(f"{method} frac={frac}")
+            _save_variance()
+            variance_tee(f"{method} frac={frac} done")
     result["selected_fracs"] = select_fracs(
         result["variance"], baseline, sw["mmlu_penalty"], shared_alpha
     )
     save_json(sweep_log, result)
+    del lm
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     cfg2 = copy.deepcopy(cfg)
     cfg2["model"]["layer"] = shared_layer
     cfg2["steering"]["alpha"] = shared_alpha

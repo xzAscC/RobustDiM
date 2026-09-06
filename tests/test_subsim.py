@@ -44,10 +44,25 @@ def test_tau_subsim_uses_each_pair_common_k() -> None:
 def test_delta_spectrum_keeps_only_positive_eigenvectors() -> None:
     pos = torch.tensor([[2.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
     neg = torch.tensor([[0.0, 0.0], [0.0, 2.0], [0.0, 0.0]])
-    delta = delta_covariance(pos, neg)
+    delta = delta_covariance(population_covariance(pos), population_covariance(neg))
     values, vectors = positive_spectrum(delta)
     assert torch.all(values > 0)
     assert vectors.shape[1] == values.numel()
+
+
+def test_delta_covariance_subtracts_covariances_exactly() -> None:
+    a = torch.tensor([[2.0, 0.5], [0.5, 1.0]])
+    b = torch.tensor([[0.5, 0.2], [0.2, 0.3]])
+    delta = delta_covariance(a, b)
+    torch.testing.assert_close(delta, (a - b).double())
+
+
+def test_pooled_covariance_curve_uses_bottom_eigenvectors() -> None:
+    pooled = torch.diag(torch.tensor([1.0, 4.0]))
+    _, vectors = torch.linalg.eigh(pooled)
+    curve = rank_curve([vectors, vectors], [1], position="bottom")
+    assert curve[1] == 1.0
+    assert torch.equal(vectors[:, :1], torch.tensor([[1.0], [0.0]]))
 
 
 def test_positive_covariance_curve_uses_bottom_eigenvectors() -> None:

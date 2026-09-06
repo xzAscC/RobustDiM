@@ -50,6 +50,11 @@ def test_parse_mmlu_choice() -> None:
     assert parse_choice("I refuse") is None
 
 
+def test_parse_choice_rejects_following_word_letters() -> None:
+    assert parse_choice("the answer is based on the data") is None
+    assert parse_choice("the answer is car") is None
+
+
 def test_parse_choice_uses_last_answer_match() -> None:
     text = "First I think the answer is (B). After checking, the answer is (C)."
     assert parse_choice(text) == "C"

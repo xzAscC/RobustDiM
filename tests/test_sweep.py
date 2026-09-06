@@ -101,4 +101,60 @@ def test_sweep_dry_run_reports_stage_counts() -> None:
             "top_per_method": 2,
         }
     )
-    assert counts == {"screen": 12, "verify": 5, "fraction": 6}
+    assert counts == {
+        "screen": 12,
+        "verify_candidates": 4,
+        "baseline": 1,
+        "fraction": 6,
+    }
+
+
+def test_select_fracs_penalizes_degenerate() -> None:
+    records = [
+        {
+            "method": "moment_proj",
+            "frac": 0.01,
+            "mmlu": 0.4,
+            "local_alphas": {20: {"safety": 0.9, "degenerate": 0.0}},
+        },
+        {
+            "method": "moment_proj",
+            "frac": 0.05,
+            "mmlu": 0.4,
+            "local_alphas": {20: {"safety": 0.95, "degenerate": 0.3}},
+        },
+    ]
+    selected = select_fracs(records, baseline=0.4, penalty=1.0, shared_alpha=20)
+    assert selected["moment_proj"]["frac"] == 0.01
+
+
+def test_select_fracs_falls_back_when_shared_alpha_missing() -> None:
+    records = [
+        {
+            "method": "moment_proj",
+            "frac": 0.01,
+            "mmlu": 0.4,
+            "local_alphas": {10: {"safety": 0.9, "degenerate": 0.0}},
+        }
+    ]
+    selected = select_fracs(records, baseline=0.4, penalty=1.0, shared_alpha=20)
+    assert selected["moment_proj"]["frac"] == 0.01
+
+
+def test_choose_shared_requires_candidates() -> None:
+    with pytest.raises(ValueError, match="verified"):
+        choose_shared([])
+
+
+def test_sweep_cfg_requires_valid_batch_size() -> None:
+    from robustdim.sweep import _sweep_cfg
+
+    with pytest.raises(ValueError, match="batch_size"):
+        _sweep_cfg({"sweep": {"batch_size": 0}})
+
+
+def test_sweep_cfg_requires_required_frac_methods() -> None:
+    from robustdim.sweep import _sweep_cfg
+
+    with pytest.raises(ValueError, match="moment_proj"):
+        _sweep_cfg({"sweep": {"frac_methods": ["lowvar"]}})
