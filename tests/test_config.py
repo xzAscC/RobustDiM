@@ -40,5 +40,5 @@ def test_default_config_contains_sweep_settings() -> None:
 
 def test_default_config_contains_generation_batch_size() -> None:
     cfg = load_config(Path("configs/default.yaml"))
-    assert cfg["sweep"]["batch_size"] == 8
+    assert cfg["sweep"]["batch_size"] == 20
     assert isinstance(cfg["sweep"]["batch_size"], int)
